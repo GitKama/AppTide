@@ -8,7 +8,11 @@ const { createDemo } = require('./demo.cjs');
 const demo = process.argv.includes('--demo');
 const arg = flag => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] : null; };
 const smokeDirectory = demo ? arg('--smoke-dir') : null;
-if (smokeDirectory) app.disableHardwareAcceleration();
+if (smokeDirectory) {
+  // Tests must not hand their launch to an already-running real AppTide window.
+  app.setPath('userData', path.join(path.resolve(smokeDirectory), 'electron-profile'));
+  app.disableHardwareAcceleration();
+}
 const page = pathToFileURL(path.join(__dirname, '../ui/index.html')).href;
 let window, service, timer;
 if (!app.requestSingleInstanceLock({ demo })) app.quit();

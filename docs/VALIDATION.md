@@ -13,6 +13,8 @@ Validated locally on Windows x64 on 10 October 2026. No real installed applicati
 
 ## Unproven boundaries
 
+Version 0.1.1 adds desktop regression coverage for 100 extra synthetic records: actions remain visible far down the list, selecting another app resets detail scrolling, and compact selection brings the action controls into view. Desktop tests use an isolated profile and require a passing receipt so an existing AppTide instance cannot silently consume the test launch.
+
 Real installer/uninstaller behavior, elevation dialogs, restart handling, installer licensing, Windows locale coverage beyond parser fixtures, AppTide signing, and unattended scheduled-task operation have not been validated. GitHub release-source code is read-only and has no installer execution path. No external security review has been completed.
 
 CI repeats unit tests, the synthetic desktop flow, and Windows packaging. CI completion is separate from local results and should be checked on the repository's Actions page.

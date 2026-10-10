@@ -4,7 +4,7 @@ A free, open-source Windows software manager with a private catalogue that learn
 
 Find what is installed, update supported apps together, remove apps deliberately, and keep a useful history of what actually changed. AppTide starts with WinGet and makes gaps in its coverage visible.
 
-**Status: 0.1.0 alpha.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended.
+**Status: 0.1.1 alpha.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
 
 ![AppTide showing synthetic demonstration apps](docs/desktop-demo.png)
 

@@ -4,3 +4,7 @@
 @media(max-width:900px){.workspace{grid-template-columns:1fr}.details{border-left:0;border-top:1px solid var(--line);padding:24px 0}.detail-placeholder{display:none}.list-area{padding-right:0}.toolbar{flex-direction:column}.overview{flex-direction:column;gap:5px}.app-list{max-height:420px;overflow:auto}.sidebar-foot{padding:8px}.details .button{max-width:300px}.source-form{max-width:360px}}
 @media(prefers-reduced-motion:no-preference){button{transition:background-color .12s ease}}
 .nav:hover{color:var(--ink)}.app-meta,.status,.facts dt,footer,.version{font-size:12px}::selection{background:#cce5e8;color:#143a44}input{caret-color:var(--accent)}.version-cell,.facts dd{font-variant-numeric:tabular-nums}
+
+/* Keep the selected app beside a long inventory. Its extra details scroll independently. */
+.details{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable}
+@media(max-width:900px){.details{position:static;max-height:none;overflow:visible;scrollbar-gutter:auto}}

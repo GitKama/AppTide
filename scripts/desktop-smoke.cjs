@@ -6,4 +6,8 @@ const directory = path.join(__dirname, '../artifacts/smoke-' + Date.now()); fs.m
 const executable = require('electron');
 const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
 const result = spawnSync(executable, [path.join(__dirname, '..'), '--demo', '--data-dir', path.join(directory, 'private-data'), '--smoke-dir', directory], { env: environment, encoding: 'utf8', timeout: 60000, windowsHide: true });
-console.log(result.stdout || ''); if (result.stderr) console.error(result.stderr); if (result.error) console.error(result.error.message); process.exitCode = result.status ?? 1;
+console.log(result.stdout || ''); if (result.stderr) console.error(result.stderr); if (result.error) console.error(result.error.message);
+const receiptPath = path.join(directory, 'result.json');
+const verified = fs.existsSync(receiptPath) && JSON.parse(fs.readFileSync(receiptPath, 'utf8')).passed === true;
+if (!verified) console.error('Desktop checks did not produce a passing receipt.');
+process.exitCode = result.status === 0 && verified ? 0 : 1;

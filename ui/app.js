@@ -9,6 +9,7 @@ function notify(text) { $('notice').textContent = text; $('notice').hidden = !te
 async function act(fn) { try { return await fn(); } catch (e) { notify(e.message); } }
 const status = a => !a.present ? ['Previously seen', ''] : a.protected ? ['System component', ''] : a.ambiguous ? ['Review match', 'unmatched'] : a.excluded ? ['Updates paused', ''] : eligible(a) ? ['Update available', 'update'] : a.wingetId ? ['No update reported', ''] : a.watch ? ['Release watch', 'unmatched'] : ['Needs a source', 'unmatched'];
 function render() {
+  $('appVersion').textContent = state.version ? `Version ${state.version} · Alpha` : 'Alpha';
   const updates = state.apps.filter(eligible), installed = state.apps.filter(a => a.present && !a.protected);
   $('demoBanner').hidden = !state.demo; $('updateCount').textContent = updates.length; $('installedCount').textContent = installed.length;
   const titles = { updates: ['Updates', 'A little maintenance. Everything in one place.'], installed: ['Installed apps', 'Know what’s here. Decide what stays.'], catalog: ['My catalogue', 'Your software history gets more useful with every scan.'], history: ['Activity', 'What ran, what changed, and what still needs attention.'], settings: ['Settings', 'A software manager that follows your preferences.'] };
@@ -34,7 +35,12 @@ function renderList() {
   $('empty').hidden = !!apps.length;
   $('emptyTitle').textContent = query ? 'No matching applications' : !state.scans ? 'Let’s see what’s installed' : view === 'updates' ? 'No actionable updates reported' : 'No applications in this view';
   $('emptyText').textContent = query ? 'Try another name or clear the search.' : !state.scans ? 'Check for updates to discover installed apps and begin building your catalogue. The scan doesn’t change your software.' : view === 'updates' ? 'Check Installed apps for excluded apps, missing sources, and software outside WinGet’s coverage.' : 'Try including system components, or run a fresh scan.';
-  $('appList').querySelectorAll('[data-uid]').forEach(button => button.addEventListener('click', () => { selected = button.dataset.uid; renderList(); renderDetails(); }));
+  $('appList').querySelectorAll('[data-uid]').forEach(button => button.addEventListener('click', () => {
+    selected = button.dataset.uid; renderList(); renderDetails();
+    $('details').scrollTop = 0;
+    // At compact widths details sit below the list rather than beside it.
+    if (window.matchMedia('(max-width:900px)').matches) $('details').scrollIntoView({ block: 'start', behavior: 'instant' });
+  }));
 }
 function renderDetails() {
   const a = state.apps.find(a => a.uid === selected); if (!a) return;
