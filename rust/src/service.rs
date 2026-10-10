@@ -52,7 +52,11 @@ impl Service {
         fs2::FileExt::try_lock_exclusive(&lock).map_err(
             |_| "AppTide Beta already has this catalogue open. Close the other beta window first.",
         )?;
-        let catalog = Catalog::load(&directory.join("catalog.json"))?;
+        let mut catalog = Catalog::load(&directory.join("catalog.json"))?;
+        if !catalog.settings.is_object() {
+            catalog.settings = json!({"automatic":false});
+        }
+        crate::knowledge::enrich(&mut catalog);
         Ok(Self {
             catalog,
             directory,
@@ -76,7 +80,16 @@ impl Service {
             self.catalog.last_scan = Some(now());
             return Ok(true);
         }
-        let native = crate::inventory::read()?;
+        let mut native = crate::inventory::read()?;
+        let folders: Vec<String> = self.catalog.settings["portableFolders"]
+            .as_array()
+            .map(|v| {
+                v.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        native.extend(crate::portable::scan(&folders)?);
         self.warnings.clear();
         let (rows, rejected, complete) = match winget::list() {
             Ok((r, n)) => (r, n, true),
@@ -94,9 +107,145 @@ impl Service {
         self.absence_verifiable = complete && rejected == 0;
         let observed = winget::reconcile(native, rows);
         self.catalog.observe(observed);
+        crate::knowledge::enrich(&mut self.catalog);
         self.learn_logs();
+        self.refresh_releases(None);
         self.save()?;
         Ok(complete)
+    }
+    pub fn refresh_releases(&mut self, only: Option<&str>) {
+        if self.demo {
+            return;
+        }
+        let mut repos = std::collections::BTreeSet::new();
+        for a in self
+            .catalog
+            .apps
+            .values()
+            .filter(|a| a.present && only.is_none_or(|id| a.uid == id))
+        {
+            if let Some(repo) = crate::releases::repository(a) {
+                let recent = a
+                    .extra
+                    .get("watch")
+                    .and_then(|w| w["checkedAt"].as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .is_some_and(|t| {
+                        chrono::Utc::now().signed_duration_since(t).num_seconds()
+                            < if only.is_some() { 60 } else { 21600 }
+                    });
+                if !recent {
+                    repos.insert(repo.to_string());
+                }
+            }
+        }
+        for repo in repos.into_iter().take(20) {
+            if self.cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            match crate::releases::fetch(&repo) {
+                Ok(release) => {
+                    for a in self.catalog.apps.values_mut().filter(|a| {
+                        a.present && crate::releases::repository(a) == Some(repo.as_str())
+                    }) {
+                        crate::releases::apply(a, &release);
+                    }
+                }
+                Err(e) => {
+                    self.warnings.push(format!("{repo}: {e}"));
+                    break;
+                }
+            }
+        }
+    }
+    pub fn watch(&mut self, id: &str, repository: &str) -> Result<()> {
+        self.cancel.store(false, Ordering::Relaxed);
+        let a = self
+            .catalog
+            .apps
+            .get_mut(id)
+            .ok_or("App no longer exists")?;
+        crate::releases::set_watch(a, repository.trim())?;
+        self.save()?;
+        self.refresh_releases(Some(id));
+        self.save()
+    }
+    pub fn automatic_preference(&mut self, id: Option<&str>, enabled: bool) -> Result<()> {
+        let old = self.catalog.clone();
+        if let Some(id) = id {
+            let a = self
+                .catalog
+                .apps
+                .get_mut(id)
+                .ok_or("App no longer exists")?;
+            if enabled && !actionable(a) {
+                return Err("Only unambiguous WinGet apps can opt in.".into());
+            }
+            a.auto_update = enabled;
+            a.extra.insert("automaticConsent".into(), 2.into());
+        } else {
+            self.catalog.settings["automatic"] = enabled.into();
+            self.catalog.settings["automaticConsent"] = 2.into();
+            self.catalog.settings["lastAutomaticAttempt"] = now().into();
+        }
+        if let Err(e) = self.save() {
+            self.catalog = old;
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn add_folder(&mut self, folder: &str, remove: bool) -> Result<()> {
+        let mut folders: Vec<String> =
+            serde_json::from_value(self.catalog.settings["portableFolders"].clone())
+                .unwrap_or_default();
+        if remove {
+            folders.retain(|f| f != folder);
+        } else {
+            crate::portable::validate_folder(folder)?;
+            let canonical = std::fs::canonicalize(folder)
+                .map_err(|e| e.to_string())?
+                .display()
+                .to_string();
+            // Keep a user-readable local path rather than the Windows extended-length prefix.
+            let canonical = canonical
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&canonical)
+                .to_string();
+            if !folders.iter().any(|f| f.eq_ignore_ascii_case(&canonical)) {
+                folders.push(canonical);
+            }
+            if folders.len() > 10 {
+                return Err("Limit portable discovery to 10 folders.".into());
+            }
+        }
+        let old = self.catalog.settings.clone();
+        self.catalog.settings["portableFolders"] = json!(folders);
+        if let Err(e) = self.save() {
+            self.catalog.settings = old;
+            return Err(e);
+        }
+        Ok(())
+    }
+    pub fn automatic(&mut self, status: impl FnMut(&str, &Catalog)) -> Result<()> {
+        if self.demo || !automatic_due(&self.catalog) {
+            return Ok(());
+        }
+        self.cancel.store(false, Ordering::Relaxed);
+        // Persist the attempt before any scan/installer. Restart cannot create a retry loop.
+        self.catalog.settings["lastAutomaticAttempt"] = now().into();
+        self.save()?;
+        if !self.scan()? {
+            return Err("Automatic check skipped: WinGet unavailable.".into());
+        }
+        if self.cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let ids = automatic_candidates(&self.catalog);
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let plan = prepare(&self.catalog, "update", &ids)?;
+        self.execute(plan, status)
     }
     fn learn_logs(&mut self) {
         let Some(local) = std::env::var_os("LOCALAPPDATA") else {
@@ -287,6 +436,7 @@ impl Service {
                     .receipts
                     .drain(..self.catalog.receipts.len() - 1000);
             }
+            crate::knowledge::enrich(&mut self.catalog);
             self.save()?;
             status("Operation recorded", &self.catalog);
             if !verified {
@@ -321,6 +471,34 @@ pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
         apps,
         created: Instant::now(),
     })
+}
+pub fn automatic_due(c: &Catalog) -> bool {
+    c.settings["automatic"] == true
+        && c.settings["automaticConsent"] == 2
+        && c.apps.values().any(|a| {
+            a.present && a.auto_update && a.extra.get("automaticConsent") == Some(&json!(2))
+        })
+        && c.settings["lastAutomaticAttempt"]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .is_some_and(|t| chrono::Utc::now().signed_duration_since(t).num_seconds() >= 3600)
+}
+pub fn automatic_candidates(c: &Catalog) -> Vec<String> {
+    c.apps
+        .values()
+        .filter(|a| {
+            eligible(a)
+                && a.auto_update
+                && a.extra.get("automaticConsent") == Some(&json!(2))
+                && c.receipts
+                    .iter()
+                    .rev()
+                    .find(|r| r["packageId"].as_str() == a.winget_id.as_deref())
+                    .is_none_or(|r| r["status"] == "verified")
+        })
+        .take(100)
+        .map(|a| a.uid.clone())
+        .collect()
 }
 pub fn validate_plan(plan: &Plan, catalog: &Catalog) -> Result<()> {
     for before in &plan.apps {
@@ -395,7 +573,21 @@ pub fn demo_catalog() -> Catalog {
             ..Default::default()
         });
     }
+    apps.push(App {
+        uid: "recipe-demo".into(),
+        key: "registry:Demo:ExifToolGUI".into(),
+        name: "ExifToolGUI version 6.0.0_64".into(),
+        publisher: "FrankB".into(),
+        version: "6.0.0_64".into(),
+        kind: "registry".into(),
+        ..Default::default()
+    });
     c.observe(apps);
+    crate::knowledge::enrich(&mut c);
+    crate::releases::apply(
+        c.apps.get_mut("recipe-demo").unwrap(),
+        &json!({"repository":"FrankBijnen/ExifToolGui","latest":"V6.1.0","checkedAt":"Synthetic preview","publishedAt":"Synthetic preview"}),
+    );
     c
 }
 
@@ -461,5 +653,43 @@ mod tests {
         assert!(Catalog::load(&p).is_err());
         assert_eq!(fs::read(&p).unwrap(), b"invalid");
         fs::remove_file(p).unwrap();
+    }
+    #[test]
+    fn automatic_requires_fresh_dual_consent_and_blocks_unverified_retry() {
+        let mut s = Service::open(PathBuf::new(), true).unwrap();
+        let id = s
+            .catalog
+            .apps
+            .values()
+            .find(|a| eligible(a))
+            .unwrap()
+            .uid
+            .clone();
+        assert!(!automatic_due(&s.catalog));
+        assert!(automatic_candidates(&s.catalog).is_empty());
+        s.catalog.settings["automatic"] = true.into();
+        s.catalog.apps.get_mut(&id).unwrap().auto_update = true;
+        assert!(!automatic_due(&s.catalog));
+        assert!(automatic_candidates(&s.catalog).is_empty());
+        s.automatic_preference(Some(&id), true).unwrap();
+        s.automatic_preference(None, true).unwrap();
+        assert!(!automatic_due(&s.catalog));
+        s.catalog.settings["lastAutomaticAttempt"] = (chrono::Utc::now()
+            - chrono::Duration::hours(2))
+        .to_rfc3339()
+        .into();
+        assert!(automatic_due(&s.catalog));
+        assert_eq!(automatic_candidates(&s.catalog), vec![id.clone()]);
+        let package = s.catalog.apps[&id].winget_id.clone();
+        s.catalog
+            .receipts
+            .push(json!({"packageId":package,"status":"unverified"}));
+        assert!(automatic_candidates(&s.catalog).is_empty());
+        s.catalog
+            .receipts
+            .push(json!({"packageId":package,"status":"verified"}));
+        assert_eq!(automatic_candidates(&s.catalog), vec![id.clone()]);
+        s.catalog.apps.get_mut(&id).unwrap().excluded = true;
+        assert!(automatic_candidates(&s.catalog).is_empty());
     }
 }

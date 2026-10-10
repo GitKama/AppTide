@@ -38,6 +38,7 @@ pub struct App {
     pub excluded: bool,
     pub auto_update: bool,
     pub log_mentions: usize,
+    pub knowledge: Option<crate::knowledge::Knowledge>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -119,13 +120,41 @@ impl Catalog {
             app.present = false;
         }
         for mut app in apps {
-            if let Some(old) = self.apps.get(&app.uid) {
+            // A unique native registration can gain a WinGet identity after mirror deduplication.
+            let old = self.apps.get(&app.uid).or_else(|| {
+                let mut matches = self
+                    .apps
+                    .values()
+                    .filter(|a| a.key == app.key && a.kind == "registry" && !a.ambiguous);
+                let first = matches.next();
+                if matches.next().is_none() {
+                    first
+                } else {
+                    None
+                }
+            });
+            if let Some(old) = old {
                 app.first_seen = old.first_seen.clone();
                 app.observations = old.observations;
                 app.versions = old.versions.clone();
                 app.excluded = old.excluded;
                 app.auto_update = old.auto_update;
+                let fresh = std::mem::take(&mut app.extra);
                 app.extra = old.extra.clone();
+                app.extra.extend(fresh);
+                if !old.publisher.is_empty()
+                    && old.publisher != app.publisher
+                    && !app.publisher.is_empty()
+                {
+                    app.auto_update = false;
+                    app.extra.remove("automaticConsent");
+                    app.extra.remove("watch");
+                    app.extra.insert(
+                        "identityNotice".into(),
+                        "Publisher changed; release association and automatic consent cleared."
+                            .into(),
+                    );
+                }
             } else {
                 app.first_seen = time.clone();
             }
@@ -286,5 +315,40 @@ mod tests {
             ),
             "verified"
         );
+    }
+    #[test]
+    fn native_identity_migration_keeps_history_but_publisher_change_revokes_consent() {
+        let mut c = Catalog::default();
+        let a = App {
+            uid: "native".into(),
+            key: "registry:test".into(),
+            kind: "registry".into(),
+            publisher: "Original".into(),
+            version: "1".into(),
+            ..Default::default()
+        };
+        c.observe(vec![a.clone()]);
+        let old = c.apps.get_mut("native").unwrap();
+        old.auto_update = true;
+        old.extra
+            .insert("watch".into(), serde_json::json!({"repository":"test/app"}));
+        old.extra.insert("signatureKind".into(), "Developer".into());
+        let mut new = App {
+            uid: "winget".into(),
+            version: "2".into(),
+            ..a.clone()
+        };
+        new.extra.insert("signatureKind".into(), "Store".into());
+        c.observe(vec![new]);
+        assert_eq!(c.apps["winget"].versions.len(), 2);
+        assert_eq!(c.apps["winget"].extra["signatureKind"], "Store");
+        assert!(c.apps["winget"].auto_update);
+        c.observe(vec![App {
+            uid: "winget".into(),
+            publisher: "Different".into(),
+            ..a
+        }]);
+        assert!(!c.apps["winget"].auto_update);
+        assert!(!c.apps["winget"].extra.contains_key("watch"));
     }
 }

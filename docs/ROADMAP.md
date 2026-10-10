@@ -6,6 +6,8 @@ Implemented: local catalogue, Windows inventory, optional portable scanning, Win
 
 ## 0.2 — Reliable identity and broader discovery
 
+Beta.2 delivered reviewed detection recipes, private learning summaries, update-owner guidance, cached stable-release watches, bounded portable discovery and opt-in updates while open. Next: a simpler private catalogue editor and structured WinGet data.
+
 - Replace display-table parsing with a structured WinGet adapter; retain a tested CLI fallback.
 - Persist explicit aliases and product-code/architecture/scope evidence; reconcile duplicate records without merging ambiguous installations.
 - Surface suggested catalogue associations with their supporting evidence and user review.

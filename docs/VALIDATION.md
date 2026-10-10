@@ -1,5 +1,13 @@
 # AppTide validation
 
+## Rust 0.2.0-beta.2
+
+- 25 Rust tests, formatting, Clippy with warnings denied, and optimized Windows build passed. New tests cover strict recipe matching, Store signature kinds, mirrored registry views, consent and retry blocking, cached release comparisons, history migration, and native custom-route layout.
+- A real read-only scan against a copy of the private catalogue identified additional update routes. The active catalogue was not used as the test output; raw inventory and paths remain private. Both initial GitHub watch providers returned valid stable release data.
+- Portable discovery was exercised with copied test executables in a folder containing an apostrophe and three nested levels; only the allowed levels were read and no executable was launched.
+- Native demo captures at desktop and compact sizes were inspected. Update/remove controls remain visible; public screenshots use synthetic data only.
+- Automatic scheduling policy and simulated WinGet operations were tested separately. Real unattended installers, UAC, reboot behavior, vendor update execution and arbitrary asset installation were not exercised. Custom routes are guidance and watch-only sources.
+
 ## Rust 0.2.0-beta.1
 
 Validated on Windows x64 on 10 October 2026 with Rust 1.99.0 and MSVC Build Tools 2022.

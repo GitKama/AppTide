@@ -1,5 +1,14 @@
 # Changes
 
+## 0.2.0-beta.2 - 10 October 2026
+
+- Embed ten reviewed product/family recipes and two channel rules for update ownership beyond WinGet. Keep official provenance and private observations separate.
+- Add Beyond WinGet, Needs research and Release watches filters, with fixed primary actions for official instructions/releases.
+- Track public GitHub stable releases with bounded requests, caching and conservative version comparison; allow per-app watch editing.
+- Deduplicate identical current-user registry mirrors and preserve history when a native identity gains WinGet correlation. Revoke automatic consent on publisher changes.
+- Add hourly opt-in WinGet updates while open, failed/unverified retry blocking, and bounded portable-folder discovery.
+- Add tests for consent, cache invalidation, metadata discovery, identity rules and custom-route layout. No real app was updated or removed during validation.
+
 ## 0.2.0-beta.1 — 10 October 2026
 
 - Add a native Rust application with a custom egui/eframe immediate-mode interface; preserve the Electron alpha alongside it.

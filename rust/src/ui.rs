@@ -22,6 +22,11 @@ enum Command {
     Execute(Plan),
     Pause(String, bool),
     Import,
+    Watch(String, String),
+    RefreshWatch(String),
+    AutoPreference(Option<String>, bool),
+    Automatic,
+    Folder(String, bool),
 }
 enum Event {
     State(Box<Catalog>, Vec<String>, String),
@@ -52,6 +57,10 @@ pub struct Tide {
     demo: bool,
     directory: String,
     details_reset: bool,
+    watch_input: String,
+    watch_app: String,
+    folder_input: String,
+    coverage_filter: usize,
     pub screenshot: Option<String>,
     frames: u32,
     pub scrolled_demo: bool,
@@ -103,6 +112,13 @@ pub fn style(ctx: &egui::Context) {
     }
 }
 impl Tide {
+    pub fn catalogue_preview(&mut self) {
+        if self.demo {
+            self.page = Page::Catalogue;
+            self.selected = Some("recipe-demo".into());
+            self.coverage_filter = 1;
+        }
+    }
     pub fn new(service: Service, ctx: &egui::Context) -> Self {
         style(ctx);
         let catalog = service.catalog.clone();
@@ -116,7 +132,10 @@ impl Tide {
             let mut service = service;
             while let Ok(command) = commands.recv() {
                 let result = match command {
-                    Command::Scan => service.scan().map(|_| ()),
+                    Command::Scan => {
+                        service.cancel.store(false, Ordering::Relaxed);
+                        service.scan().map(|_| ())
+                    }
                     Command::Execute(plan) => service.execute(plan, |phase, cat| {
                         let _ =
                             events.send(Event::State(Box::new(cat.clone()), vec![], phase.into()));
@@ -129,6 +148,21 @@ impl Tide {
                         service.save()
                     }
                     Command::Import => service.import_alpha(),
+                    Command::Watch(id, repo) => service.watch(&id, &repo),
+                    Command::RefreshWatch(id) => {
+                        service.cancel.store(false, Ordering::Relaxed);
+                        service.refresh_releases(Some(&id));
+                        service.save()
+                    }
+                    Command::AutoPreference(id, enabled) => {
+                        service.automatic_preference(id.as_deref(), enabled)
+                    }
+                    Command::Folder(folder, remove) => service.add_folder(&folder, remove),
+                    Command::Automatic => service.automatic(|phase, cat| {
+                        let _ =
+                            events.send(Event::State(Box::new(cat.clone()), vec![], phase.into()));
+                        context.request_repaint();
+                    }),
                 };
                 let _ = events.send(Event::State(
                     Box::new(service.catalog.clone()),
@@ -162,6 +196,10 @@ impl Tide {
             demo,
             directory,
             details_reset: false,
+            watch_input: String::new(),
+            watch_app: String::new(),
+            folder_input: String::new(),
+            coverage_filter: 0,
             screenshot: None,
             frames: 0,
             scrolled_demo: false,
@@ -210,7 +248,7 @@ impl Tide {
             ui.label(RichText::new("AppTide").size(23.0).strong());
         });
         ui.add_space(8.0);
-        ui.colored_label(TEAL, "Rust beta  ·  0.2");
+        ui.colored_label(TEAL, concat!("Rust ", env!("CARGO_PKG_VERSION")));
         ui.add_space(30.0);
         let count = self.catalog.apps.values().filter(|a| eligible(a)).count();
         for (page, label) in [
@@ -273,17 +311,42 @@ impl Tide {
                 ui.label(RichText::new("Available").color(MUTED));
                 ui.colored_label(TEAL, &a.available);
             });
+        } else if let Some(tag) = a.extra.get("watch").and_then(|w| w["latest"].as_str()) {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Release tag").color(MUTED));
+                ui.colored_label(TEAL, tag);
+            });
         }
         ui.add_space(10.0);
+        let external = !a.protected
+            && !a.ambiguous
+            && (crate::releases::repository(&a).is_some() || a.knowledge.is_some());
         let update = ui.add_enabled(
-            !self.busy && eligible(&a),
-            egui::Button::new(RichText::new("Update this app").color(Color32::WHITE))
-                .fill(TEAL)
-                .min_size(Vec2::new(ui.available_width(), 40.0)),
+            !self.busy && (eligible(&a) || external),
+            egui::Button::new(
+                RichText::new(if eligible(&a) {
+                    "Update this app"
+                } else if crate::releases::repository(&a).is_some() {
+                    "Open release page"
+                } else if external {
+                    "Open update instructions"
+                } else {
+                    "Update this app"
+                })
+                .color(Color32::WHITE),
+            )
+            .fill(TEAL)
+            .min_size(Vec2::new(ui.available_width(), 40.0)),
         );
         self.update_rect = Some(update.rect);
         if update.clicked() {
-            self.prepare("update", vec![a.uid.clone()]);
+            if eligible(&a) {
+                self.prepare("update", vec![a.uid.clone()]);
+            } else if let Some(repo) = crate::releases::repository(&a) {
+                open_url(&format!("https://github.com/{repo}/releases"));
+            } else if let Some(k) = &a.knowledge {
+                open_url(&k.source);
+            }
         }
         let remove = ui.add_enabled(
             !self.busy && actionable(&a),
@@ -301,7 +364,7 @@ impl Tide {
                 } else if a.ambiguous {
                     "Multiple installed versions. Resolve in Windows Settings."
                 } else {
-                    "Inventory only. No supported update source yet."
+                    "Use the update route below. Removal is available in Windows Settings."
                 })
                 .size(12.0)
                 .color(MUTED),
@@ -320,11 +383,33 @@ impl Tide {
             self.details_reset = false;
         }
         scroll.show(ui,|ui|{
+            ui.add_space(12.0);field(ui,"Update route",crate::knowledge::route(&a));
+            if let Some(k)=&a.knowledge {
+                ui.label(&k.instructions);field(ui,"Detection evidence",&k.evidence);
+                if ui.link("Official update instructions").clicked(){open_url(&k.source);}
+            } else if a.winget_id.is_none() {ui.label("No reviewed recipe yet. Version sightings remain private and never become installer commands.");}
+
             let mut excluded=a.excluded;if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut excluded,"Pause updates for this app")).changed(){self.send(Command::Pause(a.uid.clone(),excluded),"Saving preference…");}
             ui.add_space(12.0);field(ui,"Update source",a.winget_id.as_deref().unwrap_or("Not matched"));field(ui,"Evidence",&a.evidence);
             field(ui,"Local knowledge",&format!("{} scans · {} log sightings",a.observations,a.log_mentions));
+            if let Some(l)=a.extra.get("learning"){ui.label(RichText::new(format!("{} versions / {} verified operations",l["versionSightings"],l["verifiedOperations"])).small().color(MUTED));}
+            if let Some(notice)=a.extra.get("identityNotice").and_then(|v|v.as_str()){ui.label(notice);}
+
+            let mut automatic=a.auto_update && a.extra.get("automaticConsent")==Some(&serde_json::json!(2));
+            if ui.add_enabled(!self.busy && actionable(&a),egui::Checkbox::new(&mut automatic,"Allow automatic WinGet updates")).changed(){self.send(Command::AutoPreference(Some(a.uid.clone()),automatic),"Saving automatic update choice…");}
+            ui.label(RichText::new("Also requires the global switch in Settings.").small().color(MUTED));
+            ui.add_space(12.0);ui.label(RichText::new("GitHub release watch").strong());
+            if self.watch_app!=a.uid {self.watch_app=a.uid.clone();self.watch_input=crate::releases::repository(&a).unwrap_or("").into();}
+            ui.add_sized([ui.available_width(),32.0],egui::TextEdit::singleline(&mut self.watch_input).hint_text("owner/repository"));
+            ui.horizontal(|ui|{
+                if ui.add_enabled(!self.busy,egui::Button::new("Save watch")).clicked(){self.send(Command::Watch(a.uid.clone(),self.watch_input.clone()),"Saving and checking release watch…");}
+                if ui.add_enabled(!self.busy && crate::releases::repository(&a).is_some(),egui::Button::new("Refresh")).clicked(){self.send(Command::RefreshWatch(a.uid.clone()),"Checking stable release…");}
+            });
+            ui.label(RichText::new("Tracks releases only. Review the edition and installer yourself.").small().color(MUTED));
+            if let Some(w)=a.extra.get("watch") {field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
+                if let Some(t)=w["checkedAt"].as_str(){field(ui,"Last successful check",t);}}
+            if let Some(repo)=crate::releases::repository(&a) && ui.link("Open project releases").clicked(){open_url(&format!("https://github.com/{repo}/releases"));}
             ui.add_space(8.0);ui.label(RichText::new("Observed versions").strong());for v in a.versions.iter().rev(){ui.horizontal(|ui|{ui.label(&v.version);ui.label(RichText::new(v.seen_at.get(..10).unwrap_or(&v.seen_at)).size(12.0).color(MUTED));});}
-            if let Some(watch)=a.extra.get("watch"){ui.add_space(12.0);field(ui,"Saved release watch",watch["repository"].as_str().unwrap_or(""));ui.label(RichText::new("Preserved from alpha. Refreshing watches is not available in this beta yet.").size(12.0).color(MUTED));}
             if !a.location.is_empty(){ui.add_space(8.0);field(ui,"Location",&a.location);}
         });
     }
@@ -338,6 +423,30 @@ impl Tide {
         });
         ui.add_space(8.0);
         let query = self.query.to_lowercase();
+        if self.page != Page::Updates {
+            egui::ComboBox::from_id_salt("coverage-filter")
+                .selected_text(
+                    [
+                        "All update routes",
+                        "Beyond WinGet",
+                        "Needs research",
+                        "Release watches",
+                    ][self.coverage_filter],
+                )
+                .show_ui(ui, |ui| {
+                    for (i, label) in [
+                        "All update routes",
+                        "Beyond WinGet",
+                        "Needs research",
+                        "Release watches",
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        ui.selectable_value(&mut self.coverage_filter, i, *label);
+                    }
+                });
+        }
         let mut apps: Vec<_> = self
             .catalog
             .apps
@@ -345,7 +454,16 @@ impl Tide {
             .filter(|a| {
                 (self.page == Page::Catalogue || a.present)
                     && (self.show_system || !a.protected)
-                    && (self.page != Page::Updates || !a.available.is_empty())
+                    && (self.page != Page::Updates
+                        || !a.available.is_empty()
+                        || crate::releases::newer(a))
+                    && (self.page == Page::Updates
+                        || match self.coverage_filter {
+                            1 => a.winget_id.is_none() && a.knowledge.is_some(),
+                            2 => crate::knowledge::route(a) == "Needs research",
+                            3 => crate::releases::repository(a).is_some(),
+                            _ => true,
+                        })
                     && (query.is_empty()
                         || a.name.to_lowercase().contains(&query)
                         || a.publisher.to_lowercase().contains(&query)
@@ -353,7 +471,8 @@ impl Tide {
                             .as_deref()
                             .unwrap_or("")
                             .to_lowercase()
-                            .contains(&query))
+                            .contains(&query)
+                        || crate::knowledge::route(a).to_lowercase().contains(&query))
             })
             .cloned()
             .collect();
@@ -429,8 +548,18 @@ impl Tide {
         ui.heading("Your private catalogue");ui.label("The Rust beta uses a separate catalogue. Import copies your alpha history and preferences; the original stays in place.");
         if ui.add_enabled(!self.busy&&self.catalog.apps.is_empty()&&!self.demo,egui::Button::new("Import alpha catalogue")).clicked(){self.send(Command::Import,"Importing catalogue…");}
         ui.add_space(12.0);field(ui,"Data folder",&self.directory);ui.add_space(20.0);ui.heading("This beta's scope");
-        ui.label("Ready: Windows inventory, WinGet updates and removals, batch previews, local log sightings, version history, exclusions and receipts.");
-        ui.label("Coming next: automatic updates while open, portable-folder discovery and release-watch editing. Imported metadata is preserved. This beta never starts an unattended update.");
+        ui.label("Reviewed public recipes identify update owners and release sources. Your installed inventory, histories and receipts stay on this PC. Unknown apps remain research candidates; observations never authorize arbitrary installers.");
+        ui.add_space(16.0);ui.heading("Automatic updates while open");
+        let mut automatic=self.catalog.settings["automatic"]==true && self.catalog.settings["automaticConsent"]==2;
+        if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut automatic,"Check hourly and update opted-in WinGet apps")).changed(){self.send(Command::AutoPreference(None,automatic),"Saving automatic update choice…");}
+        ui.label("Off by default. Enable individual apps in their details. The first check is one hour after enabling. Failed or unverified operations block automatic retries until a manual operation verifies successfully. Closing AppTide stops scheduling; no service or startup task is installed.");
+        ui.add_space(16.0);ui.heading("Portable app folders");
+        ui.label("Read executable version metadata in folders you choose, up to two subfolder levels. Nothing is launched. Portable discoveries do not grant install or removal permission.");
+        ui.add_sized([ui.available_width().min(600.0),36.0],egui::TextEdit::singleline(&mut self.folder_input).hint_text(r"C:\Tools"));
+        if ui.add_enabled(!self.busy && !self.folder_input.is_empty(),egui::Button::new("Add folder")).clicked(){self.send(Command::Folder(self.folder_input.clone(),false),"Saving portable folder…");}
+        let folders:Vec<String>=serde_json::from_value(self.catalog.settings["portableFolders"].clone()).unwrap_or_default();
+        for folder in folders {ui.horizontal(|ui|{ui.label(&folder);if ui.add_enabled(!self.busy,egui::Button::new("Remove folder")).clicked(){self.send(Command::Folder(folder.clone(),true),"Saving portable folders…");}});}
+        ui.label("Use Check for updates after changing folders. Scan limits: 10 roots, 1,000 folders, 10,000 files and 500 executables. Links and junctions are skipped.");
         ui.add_space(20.0);ui.heading("Native by design");ui.label("A Rust core and a custom egui immediate-mode interface. Lists render only visible rows. Scans and installers run on a worker thread. The UI sleeps when idle.");if ui.link("AppTide source and issues").clicked() { open_project(); }
     });
     }
@@ -460,6 +589,12 @@ impl Tide {
             }
         }
         let ctx = ui.ctx().clone();
+        if !self.demo && self.catalog.settings["automatic"] == true {
+            ctx.request_repaint_after(Duration::from_secs(30));
+            if !self.busy && self.plan.is_none() && crate::service::automatic_due(&self.catalog) {
+                self.send(Command::Automatic, "Checking opted-in automatic updates…");
+            }
+        }
         if self.busy && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.error=Some("Wait for the current operation to finish before closing. Stop queue skips remaining apps.".into());
@@ -490,8 +625,8 @@ impl Tide {
             if let Some(error)=&self.error{ui.colored_label(Color32::from_rgb(161,43,42),error);}
             for warning in &self.warnings{ui.colored_label(Color32::from_rgb(137,80,14),RichText::new(warning).size(12.0));}
             if self.busy {ui.horizontal(|ui|{ui.spinner();ui.label(&self.phase);if ui.button("Stop queue").clicked(){self.cancel.store(true,Ordering::Relaxed);}});}
-            let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
-            ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} with a WinGet source  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(MUTED));});ui.separator();ui.add_space(10.0);
+            let learned=self.catalog.apps.values().filter(|a|a.present && a.winget_id.is_none() && a.knowledge.is_some()).count();let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
+            ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} WinGet / {learned} other known routes  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(MUTED));});ui.separator();ui.add_space(10.0);
             if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
                 let body=ui.available_rect_before_wrap();let details_width=290.0;let split=body.right()-details_width-20.0;
                 let list=Rect::from_min_max(body.min,Pos2::new(split-20.0,body.bottom()));let detail=Rect::from_min_max(Pos2::new(split+20.0,body.top()+2.0),body.max);
@@ -655,9 +790,11 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
     } else if !a.available.is_empty() {
         "Update available"
     } else if a.winget_id.is_some() {
-        "Up to date"
+        "No listed update"
+    } else if crate::releases::newer(a) {
+        "Newer release"
     } else {
-        "Inventory only"
+        crate::knowledge::route(a)
     };
     p.text(
         Pos2::new(rect.right() - 10.0, rect.center().y),
@@ -678,6 +815,19 @@ fn open_settings() {
         let mut c = std::process::Command::new("explorer.exe");
         c.arg("ms-settings:appsfeatures");
         let _ = c.spawn();
+    }
+}
+fn open_url(url: &str) {
+    if !url.starts_with("https://")
+        || url
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '"')
+    {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
     }
 }
 
@@ -759,5 +909,18 @@ mod tests {
         assert!(app.plan.is_some());
         assert!(!app.busy);
         assert!(app.catalog.receipts.is_empty());
+    }
+    #[test]
+    fn custom_route_stays_visible_and_is_never_a_winget_plan() {
+        let ctx = egui::Context::default();
+        let mut app = Tide::new(Service::open(Default::default(), true).unwrap(), &ctx);
+        app.catalogue_preview();
+        let size = Vec2::new(1040.0, 650.0);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, size, vec![]);
+        }
+        assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(app.update_rect.unwrap()));
+        assert!(crate::service::prepare(&app.catalog, "update", &["recipe-demo".into()]).is_err());
+        assert!(app.catalog.apps["recipe-demo"].knowledge.is_some());
     }
 }

@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod catalog;
 mod inventory;
+mod knowledge;
+mod portable;
+mod releases;
 mod service;
 mod ui;
 mod winget;
@@ -43,7 +46,7 @@ fn run() -> Result<(), String> {
     }
     if let Some(path) = value("--scan-report") {
         let complete = service.scan()?;
-        let report = serde_json::json!({"complete":complete,"records":service.catalog.apps.values().filter(|a|a.present).count(),"wingetRecords":service.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count(),"eligibleUpdates":service.catalog.apps.values().filter(|a|catalog::eligible(a)).count(),"scans":service.catalog.scans,"warnings":service.warnings});
+        let report = serde_json::json!({"complete":complete,"records":service.catalog.apps.values().filter(|a|a.present).count(),"wingetRecords":service.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count(),"eligibleUpdates":service.catalog.apps.values().filter(|a|catalog::eligible(a)).count(),"scans":service.catalog.scans,"warnings":service.warnings,"coverage":knowledge::coverage(&service.catalog)});
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
             .map_err(|e| e.to_string())?;
         return Ok(());
@@ -54,6 +57,7 @@ fn run() -> Result<(), String> {
     }
     let compact = args.iter().any(|a| a == "--compact");
     let scrolled = args.iter().any(|a| a == "--scrolled");
+    let catalogue_preview = args.iter().any(|a| a == "--catalogue-preview");
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size(if compact {
@@ -72,6 +76,9 @@ fn run() -> Result<(), String> {
             let mut app = ui::Tide::new(service, &cc.egui_ctx);
             app.screenshot = screenshot;
             app.scrolled_demo = scrolled;
+            if catalogue_preview {
+                app.catalogue_preview();
+            }
             Ok(Box::new(app))
         }),
     )

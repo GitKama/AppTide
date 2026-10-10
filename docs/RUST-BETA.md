@@ -28,4 +28,4 @@ The established AppTide slate/teal identity is preserved. The native beta uses a
 
 The beta opens a separate local data folder with an exclusive process lock. Alpha import is available only into an empty beta catalogue and resets automatic execution consent. Schema extensions such as saved watches are preserved. The old alpha stays runnable.
 
-Beta.1 is an initial native implementation, not a declaration of installer reliability. Unattended updates, portable discovery, and release-watch editing still need porting. Real third-party update/removal behavior requires a disposable Windows test environment; synthetic success does not prove live installer behavior.
+Beta.2 adds opt-in updates while open, portable discovery and release-watch editing, plus [reviewed public catalogue recipes](CATALOGUE.md). This remains a beta, not a declaration of installer reliability. Real third-party update/removal behavior requires a disposable Windows test environment; synthetic success does not prove live installer behavior.

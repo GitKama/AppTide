@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "revision": "2026-10-10.1",
+  "recipes": [
+    {
+      "id": "exiftoolgui",
+      "namePattern": "(?i)^ExifToolGUI(?: version [0-9][0-9._]*(?:32|64)?)?$",
+      "publishers": [
+        "FrankB"
+      ],
+      "owner": "GitHub releases",
+      "instructions": "Compare the stable release with the installed version. Review the project's ExifTool requirements before using its installer or portable package.",
+      "source": "https://github.com/FrankBijnen/ExifToolGui/releases",
+      "repository": "FrankBijnen/ExifToolGui",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "meetily",
+      "namePattern": "(?i)^meetily$",
+      "publishers": [
+        "meetily",
+        "Zackriya Solutions"
+      ],
+      "owner": "GitHub releases",
+      "instructions": "Track Community releases. Review migration notes and edition before installing; Pro and private forks are separate products.",
+      "source": "https://github.com/Zackriya-Solutions/meetily/releases",
+      "repository": "Zackriya-Solutions/meetily",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "adobe-creative-cloud",
+      "namePattern": "(?i)^Adobe (?:Creative Cloud|Photoshop(?: [0-9]{4})?|Lightroom(?: Classic)?(?: [0-9.]+)?)$",
+      "publishers": [
+        "Adobe Inc.",
+        "Adobe Systems Incorporated"
+      ],
+      "owner": "Adobe Creative Cloud",
+      "instructions": "Use Creative Cloud > Apps > Updates. Its preferences control automatic updates; major upgrades may remove old versions. AppTide does not infer entitlement or the latest compatible version.",
+      "source": "https://helpx.adobe.com/ca/creative-cloud/apps/manage-apps/creative-cloud-apps/update-creative-cloud-apps-automatically.html",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "nvidia-app-driver",
+      "namePattern": "(?i)^NVIDIA (?:App|Graphics Driver)(?: [0-9.]+)?$",
+      "publishers": [
+        "NVIDIA Corporation"
+      ],
+      "owner": "NVIDIA App",
+      "instructions": "Use NVIDIA App to check the driver appropriate to your hardware and chosen Game Ready or Studio channel. Supporting components and CUDA toolkits are not interchangeable.",
+      "source": "https://www.nvidia.com/en-us/software/nvidia-app/",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "plugable-digital-viewer",
+      "namePattern": "(?i)^Plugable Digital Viewer$",
+      "publishers": [
+        "Plugable Technologies"
+      ],
+      "owner": "Vendor download",
+      "instructions": "Review the official Digital Viewer download for your Windows version and device. AppTide does not scrape or run the download automatically.",
+      "source": "https://plugable.com/pages/microscope-drivers",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "everything",
+      "namePattern": "(?i)^Everything(?: [0-9.]+)?(?: \\(x(?:86|64)\\))?$",
+      "publishers": [
+        "voidtools"
+      ],
+      "owner": "Vendor download",
+      "instructions": "Choose the matching architecture and stable channel on the official downloads page. Separate x86 and x64 installations are retained.",
+      "source": "https://www.voidtools.com/downloads/",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "chrome",
+      "namePattern": "(?i)^Google Chrome$",
+      "publishers": [
+        "Google LLC",
+        "Google Inc."
+      ],
+      "owner": "Browser updater",
+      "instructions": "Open Chrome > Help > About Google Chrome. Chrome checks for updates there and may need a relaunch; managed policies can override its updater.",
+      "source": "https://support.google.com/chrome/answer/95414?hl=en",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "brave",
+      "namePattern": "(?i)^Brave$",
+      "publishers": [
+        "Brave Software Inc",
+        "Brave Software Inc."
+      ],
+      "owner": "Browser updater",
+      "instructions": "Open Brave > Help > About Brave to check its built-in updater. Relaunch when prompted. This rule is for the stable product only.",
+      "source": "https://support.brave.app/hc/en-us/articles/37970926931853-How-do-I-update-Brave",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "battle-net",
+      "namePattern": "(?i)^(?:Battle\\.net|World of Warcraft|Diablo (?:III|IV)|StarCraft II|Hearthstone|Overwatch(?: 2)?)$",
+      "publishers": [
+        "Blizzard Entertainment",
+        "Blizzard Entertainment, Inc."
+      ],
+      "owner": "Battle.net",
+      "instructions": "Use the Battle.net desktop app to manage this product's download, update channel and uninstall. AppTide does not compare its launcher build numbers.",
+      "source": "https://worldofwarcraft.blizzard.com/en-gb/news/14568367/upgrade-to-the-battlenet-desktop-app",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "steam-client",
+      "namePattern": "(?i)^Steam$",
+      "publishers": [
+        "Valve Corporation"
+      ],
+      "owner": "Steam",
+      "instructions": "Use Steam > Check for Steam Client Updates. Manage games in the Steam Library and downloads queue.",
+      "source": "https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    }
+  ]
+}

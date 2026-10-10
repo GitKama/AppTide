@@ -4,9 +4,9 @@ A free, open-source Windows software manager with a private catalogue that learn
 
 Find what is installed, update supported apps together, remove apps deliberately, and keep a useful history of what actually changed. AppTide starts with WinGet and makes gaps in its coverage visible.
 
-**Status: native Rust 0.2.0-beta.1; Electron 0.1.1 alpha remains available.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
+**Status: native Rust 0.2.0-beta.2; Electron 0.1.1 alpha remains available.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
 
-**Try the native Rust beta:** [AppTide 0.2.0-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.1) uses a custom egui immediate-mode interface, a virtualized app list, and fixed update/uninstall controls. The portable executable has no Electron or JavaScript runtime. See [beta scope and build instructions](rust/README.md) and [research and architecture decisions](docs/RUST-BETA.md). The alpha remains available; automatic updates, portable discovery, and release-watch editing have not yet been ported to the beta.
+**Try the native Rust beta:** [AppTide 0.2.0-beta.2](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.2) uses a custom egui immediate-mode interface, a virtualized app list, and fixed update/uninstall controls. The portable executable has no Electron or JavaScript runtime. See [beta scope and build instructions](rust/README.md) and [research and architecture decisions](docs/RUST-BETA.md). The beta includes opt-in automatic WinGet updates while open, bounded portable discovery, editable release watches, and a bundled software-recipe database. See [catalogue design and sources](docs/CATALOGUE.md).
 
 ![Rust beta showing synthetic demonstration apps](docs/rust-beta.png)
 
@@ -53,9 +53,9 @@ Packaging refuses to overwrite an existing output. Set `APPTIDE_PACKAGE_OUT` to 
 
 ## What “learns” means
 
-Every successful scan adds observations to a catalogue stored under `%LOCALAPPDATA%\AppTide`. WinGet-correlated identities survive registry-key changes, version history is retained, and absent records remain historical. Local WinGet logs add evidence that a package ID was seen. Operation receipts distinguish a verified result from an exit code that merely reported success.
+Every successful scan adds observations to a private catalogue under `%LOCALAPPDATA%\AppTide-Beta` (Rust) or `%LOCALAPPDATA%\AppTide` (Electron). WinGet-correlated identities survive registry-key changes, version history is retained, and absent records remain historical. Local WinGet logs add evidence that a package ID was seen. Operation receipts distinguish a verified result from an exit code that merely reported success.
 
-This is deterministic evidence collection, **not an AI model**, web-wide installer discovery, or automatic trust assignment. A GitHub release watch records a source the user explicitly supplies. It does not prove that a release asset is safe, compatible, or newer than an arbitrary installed version string.
+This is deterministic evidence collection, **not an AI model**, web-wide installer discovery, or automatic trust assignment. A GitHub release watch records a reviewed bundled source or one the user explicitly supplies. It does not prove that a release asset is safe, compatible, or newer than an arbitrary installed version string.
 
 No private inventory, logs, credentials, or machine paths belong in this repository. AppTide itself has no telemetry. WinGet source requests and optional public GitHub API requests still use their providers' services.
 
