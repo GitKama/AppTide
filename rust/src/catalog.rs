@@ -149,6 +149,7 @@ impl Catalog {
                     app.auto_update = false;
                     app.extra.remove("automaticConsent");
                     app.extra.remove("watch");
+                    app.extra.remove("customSource");
                     app.extra.insert(
                         "identityNotice".into(),
                         "Publisher changed; release association and automatic consent cleared."

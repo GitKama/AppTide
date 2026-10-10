@@ -130,6 +130,8 @@ pub fn route(a: &App) -> &str {
         "Review identity"
     } else if a.winget_id.is_some() {
         "WinGet"
+    } else if crate::custom::get(a).is_some() {
+        "Your custom source"
     } else if a
         .extra
         .get("watch")

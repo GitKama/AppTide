@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod catalog;
+mod custom;
 mod inventory;
 mod knowledge;
 mod portable;
 mod releases;
+mod self_update;
 mod service;
 mod ui;
 mod winget;
@@ -11,7 +13,9 @@ use std::path::PathBuf;
 fn main() {
     if let Err(e) = run() {
         #[cfg(windows)]
-        if !std::env::args().any(|arg| arg == "--scan-report") {
+        if !std::env::args().any(|arg| {
+            arg == "--scan-report" || arg == "--apply-self-update" || arg == "--self-update-report"
+        }) {
             use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
             let text: Vec<u16> = e.encode_utf16().chain(Some(0)).collect();
             let title: Vec<u16> = "AppTide Beta".encode_utf16().chain(Some(0)).collect();
@@ -37,6 +41,15 @@ fn run() -> Result<(), String> {
             .cloned()
     };
     let demo = args.iter().any(|a| a == "--demo");
+    if let Some(path) = value("--apply-self-update") {
+        return self_update::apply(std::path::Path::new(&path));
+    }
+    if let Some(path) = value("--self-update-report") {
+        let report = serde_json::json!({"current":env!("CARGO_PKG_VERSION"),"available":self_update::check()?});
+        std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     let directory = value("--data-dir")
         .map(PathBuf::from)
         .unwrap_or_else(catalog::data_directory);
@@ -57,6 +70,7 @@ fn run() -> Result<(), String> {
     }
     let compact = args.iter().any(|a| a == "--compact");
     let scrolled = args.iter().any(|a| a == "--scrolled");
+    let editor_preview = args.iter().any(|a| a == "--editor-preview");
     let catalogue_preview = args.iter().any(|a| a == "--catalogue-preview");
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -78,6 +92,9 @@ fn run() -> Result<(), String> {
             app.scrolled_demo = scrolled;
             if catalogue_preview {
                 app.catalogue_preview();
+            }
+            if editor_preview {
+                app.editor_preview();
             }
             Ok(Box::new(app))
         }),

@@ -1,6 +1,6 @@
 [package]
 name = "apptide-beta"
-version = "0.2.0-beta.2"
+version = "0.2.1-beta.1"
 edition = "2024"
 license = "MIT"
 description = "AppTide native Windows software manager"
@@ -19,7 +19,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 
 [profile.release]
 lto = "thin"

@@ -1,5 +1,13 @@
 # AppTide validation
 
+## Rust 0.2.1-beta.1
+
+- 32 default Rust tests passed; one additional network test passed when explicitly enabled. Default CI skips external download testing. Formatting, Clippy and release compilation passed locally.
+- Catalogue editor interaction was exercised at the minimum window size through actual egui pointer events and the worker; manual identity/version persistence and rejected sources were tested.
+- The production self-update download function fetched a published AppTide asset, verified its GitHub SHA-256 and extracted the exact permitted package files.
+- A disposable beta.2 package was closed, replaced with 0.2.1 and relaunched through the helper. The resulting executable hash matched, one new process was running, a backup existed, and a private catalogue sentinel was unchanged.
+- Locked-companion rollback and rejection of changed target hashes were tested. A future release initiated through the production update banner remains unexercised; these are separate download and handoff checks. See SELF-UPDATES.md for boundaries.
+
 ## Rust 0.2.0-beta.2
 
 - 25 Rust tests, formatting, Clippy with warnings denied, and optimized Windows build passed. New tests cover strict recipe matching, Store signature kinds, mirrored registry views, consent and retry blocking, cached release comparisons, history migration, and native custom-route layout.

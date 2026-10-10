@@ -1,5 +1,14 @@
 # Changes
 
+## 0.2.1-beta.1 - 10 October 2026
+
+- Add a private catalogue editor for official sources, GitHub projects and update notes. Users can add, rename, version and stop tracking manual entries.
+- Expand bundled recipes with 7-Zip, VLC, KeePass and Notepad++. Accept GitHub project URLs in watch fields and allow disabling bundled watches.
+- Check AppTide releases asynchronously at startup, with beta-aware version ordering, a manual check and an opt-out.
+- Add verified self-update downloads, bounded archive extraction, a close/replace/relaunch helper, package backups and rollback on replacement failure. Private catalogue files are excluded from replacement.
+- Validate the production download function against a real published asset and the restart handoff against disposable package copies.
+- Preserve release tags, changelogs and prior assets; document versioning and add Rust CI caching.
+
 ## 0.2.0-beta.2 - 10 October 2026
 
 - Embed ten reviewed product/family recipes and two channel rules for update ownership beyond WinGet. Keep official provenance and private observations separate.

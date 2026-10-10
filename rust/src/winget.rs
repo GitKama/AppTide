@@ -86,7 +86,12 @@ pub fn normalize(s: &str) -> String {
 pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
     for a in &mut inventory {
         a.uid = digest(&a.key)[..24].into();
-        a.evidence = "Windows inventory".into();
+        a.evidence = match a.kind.as_str() {
+            "manual" => "Manually tracked; installation not detected",
+            "portable" => "Executable metadata in a selected folder",
+            _ => "Windows inventory",
+        }
+        .into();
     }
     for row in rows {
         let matches: Vec<_> = inventory

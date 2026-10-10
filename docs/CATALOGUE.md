@@ -2,11 +2,17 @@
 
 ## Two separate stores
 
-The bundled database is `rust/data/recipes.json`: versioned JSON with reviewed public product names, exact publishers, update owners, instructions, official sources, review dates, and optional GitHub release repositories. Beta.2 ships ten product/family recipes plus two channel rules. Rust embeds the database in the executable, so it works without downloading a catalogue.
+The bundled database is `rust/data/recipes.json`: versioned JSON with reviewed public product names, exact publishers, update owners, instructions, official sources, review dates, and optional GitHub release repositories. Beta.2 introduced ten product/family recipes and two channel rules; 0.2.1 adds 7-Zip, VLC, KeePass and Notepad++ for fourteen product/family recipes plus the channel rules. Rust embeds the database in the executable, so it works without downloading a catalogue.
 
 The private catalogue is `%LOCALAPPDATA%\AppTide-Beta\catalog.json`. It accumulates first/last sightings, versions, preferences, release associations, log sightings and verified/unverified operation counts. An unknown app is a **Needs research** entry, not a failure or an invitation to guess an installer. Public recipes and private observations have different authority. No inventory is uploaded and no private observation becomes a public contribution automatically.
 
 Structured records fit this task better than retrieval-augmented generation: identity, version comparison and installer permission need reproducible rules. The database neither needs an AI model nor treats text from logs as commands.
+
+## Maintain your own catalogue
+
+Choose **My catalogue > Add custom app**, enter a name, optional manually maintained version, official HTTPS page, optional GitHub project URL and update notes. The entry is explicitly marked manually tracked; AppTide does not claim it was detected on disk. Rename it or change its version and source using **Edit my catalogue entry**. **Stop tracking** retains its history without changing installed software.
+
+The same editor can attach sources and notes to detected apps, while their detected name/version remain inventory-owned. A GitHub URL or `owner/repository` is accepted. Clearing the watch disables its bundled release association too. HTTPS source links open in the browser; saved notes are never commands. No local entries are uploaded or silently added to the public database.
 
 ## Recognition and update routes
 

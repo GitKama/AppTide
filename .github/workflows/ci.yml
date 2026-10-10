@@ -13,6 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-rust-1.99-${{ hashFiles('rust/Cargo.lock', 'rust/.cargo/config.toml') }}
+          restore-keys: ${{ runner.os }}-rust-1.99-
       - run: cargo fmt --check
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings

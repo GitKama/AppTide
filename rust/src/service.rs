@@ -90,6 +90,13 @@ impl Service {
             })
             .unwrap_or_default();
         native.extend(crate::portable::scan(&folders)?);
+        native.extend(
+            self.catalog
+                .apps
+                .values()
+                .filter(|a| a.kind == "manual" && a.present)
+                .cloned(),
+        );
         self.warnings.clear();
         let (rows, rejected, complete) = match winget::list() {
             Ok((r, n)) => (r, n, true),
@@ -166,9 +173,69 @@ impl Service {
             .get_mut(id)
             .ok_or("App no longer exists")?;
         crate::releases::set_watch(a, repository.trim())?;
+        if let Some(mut source) = crate::custom::get(a) {
+            source.repository = repository.trim().into();
+            a.extra
+                .insert("customSource".into(), serde_json::to_value(source).unwrap());
+        }
         self.save()?;
         self.refresh_releases(Some(id));
         self.save()
+    }
+    pub fn custom_source(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        source: crate::custom::Source,
+    ) -> Result<()> {
+        let old = self.catalog.clone();
+        let uid = if let Some(id) = id {
+            id.to_string()
+        } else {
+            if name.trim().is_empty() || name.len() > 160 {
+                return Err("Enter an app name (up to 160 characters).".into());
+            }
+            let key = format!(
+                "manual-{}",
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            );
+            let id = catalog::digest(&key)[..24].to_string();
+            self.catalog.apps.insert(
+                id.clone(),
+                App {
+                    uid: id.clone(),
+                    key,
+                    name: name.trim().into(),
+                    kind: "manual".into(),
+                    present: true,
+                    first_seen: now(),
+                    last_seen: now(),
+                    evidence: "Manually tracked by you; installation not detected".into(),
+                    ..Default::default()
+                },
+            );
+            id
+        };
+        let result = (|| {
+            let a = self
+                .catalog
+                .apps
+                .get_mut(&uid)
+                .ok_or("App no longer exists")?;
+            if a.kind == "manual" {
+                if name.trim().is_empty() || name.len() > 160 {
+                    return Err("Enter an app name (up to 160 characters).".into());
+                }
+                a.name = name.trim().into();
+            }
+            crate::custom::save(a, source)?;
+            crate::knowledge::enrich(&mut self.catalog);
+            self.save()
+        })();
+        if result.is_err() {
+            self.catalog = old;
+        }
+        result
     }
     pub fn automatic_preference(&mut self, id: Option<&str>, enabled: bool) -> Result<()> {
         let old = self.catalog.clone();
@@ -691,5 +758,53 @@ mod tests {
         assert_eq!(automatic_candidates(&s.catalog), vec![id.clone()]);
         s.catalog.apps.get_mut(&id).unwrap().excluded = true;
         assert!(automatic_candidates(&s.catalog).is_empty());
+    }
+    #[test]
+    fn manual_catalogue_entries_keep_identity_and_versions_across_scans() {
+        let mut s = Service::open(PathBuf::new(), true).unwrap();
+        let source = crate::custom::Source {
+            url: "https://example.org/downloads".into(),
+            manual_version: "1.0".into(),
+            ..Default::default()
+        };
+        s.custom_source(None, "Example utility", source.clone())
+            .unwrap();
+        let a = s
+            .catalog
+            .apps
+            .values()
+            .find(|a| a.kind == "manual")
+            .unwrap()
+            .clone();
+        let native = winget::reconcile(vec![a.clone()], vec![]);
+        assert_eq!(native[0].uid, a.uid);
+        s.catalog.observe(native);
+        assert!(s.catalog.apps[&a.uid].present);
+        assert_eq!(s.catalog.apps[&a.uid].versions.len(), 1);
+        s.custom_source(
+            Some(&a.uid),
+            "Renamed utility",
+            crate::custom::Source {
+                manual_version: "2.0".into(),
+                ..source
+            },
+        )
+        .unwrap();
+        assert_eq!(s.catalog.apps[&a.uid].name, "Renamed utility");
+        assert_eq!(s.catalog.apps[&a.uid].versions.len(), 2);
+        assert!(!actionable(&s.catalog.apps[&a.uid]));
+        let count = s.catalog.apps.len();
+        assert!(
+            s.custom_source(
+                None,
+                "Invalid",
+                crate::custom::Source {
+                    url: "file:///bad".into(),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(s.catalog.apps.len(), count);
     }
 }

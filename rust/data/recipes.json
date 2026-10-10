@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "revision": "2026-10-10.1",
+  "revision": "2026-10-10.2",
   "recipes": [
     {
       "id": "exiftoolgui",
@@ -125,6 +125,55 @@
       "instructions": "Use Steam > Check for Steam Client Updates. Manage games in the Steam Library and downloads queue.",
       "source": "https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C",
       "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "seven-zip",
+      "namePattern": "(?i)^7-Zip(?: [0-9.]+)?(?: \\((?:x64|x86|arm64)\\))?$",
+      "publishers": [
+        "Igor Pavlov"
+      ],
+      "owner": "Vendor download",
+      "instructions": "Use the official 7-Zip download page and select the installed architecture. AppTide keeps separate architecture registrations distinct.",
+      "source": "https://www.7-zip.org/download.html",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "vlc",
+      "namePattern": "(?i)^VLC media player(?: [0-9.]+)?$",
+      "publishers": [
+        "VideoLAN"
+      ],
+      "owner": "Vendor download",
+      "instructions": "Use the official Windows VLC download or its built-in update check. Match the architecture and keep nightly builds separate.",
+      "source": "https://www.videolan.org/vlc/download-windows.html",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "keepass",
+      "namePattern": "(?i)^KeePass Password Safe(?: [0-9.]+)?$",
+      "publishers": [
+        "Dominik Reichl"
+      ],
+      "owner": "Vendor download",
+      "instructions": "Review the official KeePass downloads and choose the correct major version and installation type. Keep your database backed up before changing password-manager software.",
+      "source": "https://keepass.info/download.html",
+      "repository": "",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "id": "notepad-plus-plus",
+      "namePattern": "(?i)^Notepad\\+\\+(?: \\((?:64-bit x64|32-bit x86|ARM64)\\))?$",
+      "publishers": [
+        "Notepad++ Team",
+        "Don Ho"
+      ],
+      "owner": "GitHub releases",
+      "instructions": "Review the official release and choose the same architecture and installed or portable edition. Release tracking does not run installers.",
+      "source": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases",
+      "repository": "notepad-plus-plus/notepad-plus-plus",
       "reviewed": "2026-10-10"
     }
   ]

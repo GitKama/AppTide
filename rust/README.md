@@ -1,9 +1,9 @@
 # AppTide Rust beta
 
-Version 0.2.0-beta.2 is the native Rust implementation alongside the Electron alpha.
+Version 0.2.1-beta.1 is the native Rust implementation alongside the Electron alpha.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
-**Build status:** compiled and validated locally on Windows x64. Twenty-five automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
+**Build status:** compiled and validated locally on Windows x64. Thirty-two automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
 
 ## Build and run
 
@@ -18,7 +18,7 @@ cargo build --release
 ```
 
 WinGet must be available through Windows App Installer for live package operations.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.2), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.1-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 
@@ -34,6 +34,12 @@ Beta.2 adds a bundled structured recipe database, Store/Steam ownership detectio
 Automatic WinGet updates require both the global Settings switch and an individual app opt-in. Checks run hourly while the window is open, starting one hour after enabling. No service or startup task is installed. Unverified or failed receipts block automatic retries. These execution paths are tested with synthetic operations; real unattended installer compatibility remains unproven.
 
 Add portable folders in Settings, then scan. Discovery reads executable metadata only, two subfolder levels, up to 10 roots / 1,000 directories / 10,000 files / 500 executables; it skips links and junctions. An inaccessible folder or exceeded bound preserves the previous inventory rather than claiming absent apps. Release watches can be edited/refreshed per app; stable release tags are compared conservatively and never become installer commands.
+
+## Your catalogue and AppTide updates
+
+In My catalogue, choose **Add custom app** to track a product manually. Select any app and choose **Edit my catalogue entry** to save its official HTTPS source, GitHub project URL, version (manual entries only), and update notes. These records remain private. Stop tracking retains history and never uninstalls software.
+
+AppTide checks its own GitHub beta releases at startup; Settings also offers a manual check and opt-out. **Update AppTide and restart** verifies the release, retains the old package files and relaunches with the same private catalogue. See [self-update validation and limits](https://github.com/GitKama/AppTide/blob/main/docs/SELF-UPDATES.md).
 
 ## Data and migration
 
