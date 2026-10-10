@@ -1,5 +1,16 @@
 # Changes
 
+## 0.2.0-beta.1 — 10 October 2026
+
+- Add a native Rust application with a custom egui/eframe immediate-mode interface; preserve the Electron alpha alongside it.
+- Virtualize long app lists and keep update/uninstall controls outside both scrolling areas.
+- Port registry inventory, WinGet operations, catalogue history, exclusions, log sightings, previews, preflight checks and receipts to Rust. AppX uses a fixed read-only Windows command.
+- Separate the beta catalogue from the alpha, provide import, retain backups and prevent simultaneous writers.
+- Separate process stdout from stderr so PowerShell diagnostic messages cannot corrupt inventory JSON.
+- Statically link the MSVC runtime for a portable executable using only Windows system DLL imports.
+- Add 15 Rust checks and Windows CI. Validate native screenshots, a live read-only scan, and an alpha import that preserves the original file hash.
+- This first Rust beta does not yet enable automatic updates, portable discovery or release-watch editing. Real installer and uninstaller behavior remains unvalidated.
+
 ## 0.1.1 alpha — 10 October 2026
 
 - Keep the application details pane visible while scrolling a long inventory. Additional details scroll independently.

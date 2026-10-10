@@ -1,0 +1,79 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod catalog;
+mod inventory;
+mod service;
+mod ui;
+mod winget;
+use std::path::PathBuf;
+fn main() {
+    if let Err(e) = run() {
+        #[cfg(windows)]
+        if !std::env::args().any(|arg| arg == "--scan-report") {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+            let text: Vec<u16> = e.encode_utf16().chain(Some(0)).collect();
+            let title: Vec<u16> = "AppTide Beta".encode_utf16().chain(Some(0)).collect();
+            unsafe {
+                MessageBoxW(
+                    std::ptr::null_mut(),
+                    text.as_ptr(),
+                    title.as_ptr(),
+                    MB_OK | MB_ICONERROR,
+                );
+            }
+        }
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+}
+fn run() -> Result<(), String> {
+    let args: Vec<String> = std::env::args().collect();
+    let value = |key: &str| {
+        args.iter()
+            .position(|a| a == key)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let demo = args.iter().any(|a| a == "--demo");
+    let directory = value("--data-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(catalog::data_directory);
+    let mut service = service::Service::open(directory, demo)?;
+    if args.iter().any(|a| a == "--import-alpha") {
+        service.import_alpha()?;
+    }
+    if let Some(path) = value("--scan-report") {
+        let complete = service.scan()?;
+        let report = serde_json::json!({"complete":complete,"records":service.catalog.apps.values().filter(|a|a.present).count(),"wingetRecords":service.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count(),"eligibleUpdates":service.catalog.apps.values().filter(|a|catalog::eligible(a)).count(),"scans":service.catalog.scans,"warnings":service.warnings});
+        std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let screenshot = value("--screenshot");
+    if screenshot.is_some() && !demo {
+        return Err("Screenshots require --demo to protect private inventory.".into());
+    }
+    let compact = args.iter().any(|a| a == "--compact");
+    let scrolled = args.iter().any(|a| a == "--scrolled");
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size(if compact {
+                [1040.0, 700.0]
+            } else {
+                [1440.0, 900.0]
+            })
+            .with_min_inner_size([1040.0, 650.0]),
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "AppTide Beta",
+        options,
+        Box::new(move |cc| {
+            let mut app = ui::Tide::new(service, &cc.egui_ctx);
+            app.screenshot = screenshot;
+            app.scrolled_demo = scrolled;
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| e.to_string())
+}

@@ -11,3 +11,5 @@ The details pane stays pinned within the viewport beside long application lists 
 The memorable element is the catalogue's evidence trail: version observations and log sightings beside each app. Log observations never imply a verified update. Source coverage remains visible even when no updates are available.
 
 Design decision: build directly from the operating task and review rendered desktop states. No user-specific aesthetic preference is inferred or saved.
+
+Rust beta: preserve this identity using custom egui rows and panels. The three-column layout has a 1040×650 logical minimum window size. Only the centre list and lower details scroll; the right-side update/uninstall controls stay fixed. Long names in the fixed header truncate with full-text hover hints. Use Windows' installed Segoe UI without redistributing it. Render visible rows and repaint on input/worker events.

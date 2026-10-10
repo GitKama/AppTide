@@ -1,4 +1,20 @@
-# Initial alpha validation
+# AppTide validation
+
+## Rust 0.2.0-beta.1
+
+Validated on Windows x64 on 10 October 2026 with Rust 1.99.0 and MSVC Build Tools 2022.
+
+- 15 automated checks passed: parser rejection, exact arguments, duplicate identities, stale preflight, simulated update/removal, bounded log matching, catalogue history and extension preservation, atomic backup/recovery, corruption handling, exclusive writer lock, stdout/stderr separation, actual UI click-to-preview, and long-list action visibility at 1440×900 and 1040×650.
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and optimized Windows compilation passed locally.
+- Native render captures were visually inspected at 1440×900 and 1040×700. The compact capture scrolls far into 186 synthetic records; both action buttons remain visible. Public screenshots contain synthetic data only.
+- A real read-only registry/AppX/WinGet scan completed. Unsupported WinGet rows were reported rather than inferred. Individual app inventories and logs remain private.
+- Alpha catalogue import completed in a separate test directory. The alpha file's SHA-256 was unchanged across import and scan.
+- PE dependency inspection showed only Windows system DLL imports after static CRT linking. This does not prove compatibility with every GPU/Windows configuration.
+- No real third-party update or removal was performed. Installer/elevation/reboot behavior, signing, locale coverage and screen-reader behavior remain unproven. CLI omissions prevent claiming verified uninstall absence.
+
+The Rust CI job repeats formatting, automated checks, Clippy and release compilation. Local results and remote CI status are distinct.
+
+## Initial alpha validation
 
 Validated locally on Windows x64 on 10 October 2026. No real installed application was updated or removed during this work.
 

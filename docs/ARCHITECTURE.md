@@ -1,5 +1,7 @@
 # Architecture
 
+The architecture below describes the Electron alpha. The native implementation lives in `rust/`: `service.rs` owns a serialized worker, `catalog.rs` owns schema-compatible persistence, `inventory.rs` reads Windows inventory, `winget.rs` constructs and runs exact commands, and `ui.rs` draws the custom immediate-mode interface. See [Rust beta decisions and scope](RUST-BETA.md).
+
 ```text
 Windows registry + current-user AppX + selected portable folders
                             |

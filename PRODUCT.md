@@ -20,6 +20,8 @@ Make Windows software maintenance as approachable as a Linux software manager, s
 
 Implementation decision: Electron, plain HTML/CSS/JavaScript, Node built-in modules, Windows PowerShell inventory, and the existing WinGet client. No runtime web service, account, or language-model dependency. The stack is chosen to produce a distributable Windows application using the available toolchain.
 
+The owner subsequently requested Rust and a custom immediate-mode UI. Version 0.2.0-beta.1 implements that direction with egui/eframe, a native registry reader, and a serialized Rust worker. It retains a fixed Windows AppX command and the WinGet CLI. The Electron alpha remains available while missing features are ported. See `rust/README.md` for the exact beta scope.
+
 ## Capabilities and Constraints
 
 Confirmed request: discover installed software, one-button updates, removal, a catalogue enriched over time, free and open source. The project owner selected AppTide, public GitHub, MIT licence.

@@ -1,4 +1,7 @@
 node_modules/
+rust/target/
+__pycache__/
+*.pyc
 dist/
 artifacts/
 .impeccable/

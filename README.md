@@ -4,11 +4,15 @@ A free, open-source Windows software manager with a private catalogue that learn
 
 Find what is installed, update supported apps together, remove apps deliberately, and keep a useful history of what actually changed. AppTide starts with WinGet and makes gaps in its coverage visible.
 
-**Status: 0.1.1 alpha.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
+**Status: native Rust 0.2.0-beta.1; Electron 0.1.1 alpha remains available.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
+
+**Try the native Rust beta:** [AppTide 0.2.0-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.1) uses a custom egui immediate-mode interface, a virtualized app list, and fixed update/uninstall controls. The portable executable has no Electron or JavaScript runtime. See [beta scope and build instructions](rust/README.md) and [research and architecture decisions](docs/RUST-BETA.md). The alpha remains available; automatic updates, portable discovery, and release-watch editing have not yet been ported to the beta.
+
+![Rust beta showing synthetic demonstration apps](docs/rust-beta.png)
 
 ![AppTide showing synthetic demonstration apps](docs/desktop-demo.png)
 
-## What works
+## Electron alpha capabilities
 
 - Inventory from machine/current-user uninstall registry records (32-bit and 64-bit), current-user AppX packages, and WinGet.
 - Optional portable-folder discovery: EXE metadata, three directory levels, 500 files per folder, no symlink traversal or execution.
@@ -20,7 +24,7 @@ Find what is installed, update supported apps together, remove apps deliberately
 - Manually refreshed, watch-only GitHub release sources for custom catalogue entries. No automatic asset execution.
 - A synthetic demo that exercises the interface and operation flow without changing real software.
 
-## Run
+## Run the Electron alpha
 
 On Windows x64 with WinGet available through App Installer:
 

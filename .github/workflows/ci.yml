@@ -5,6 +5,22 @@ on:
 permissions:
   contents: read
 jobs:
+  rust-beta:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo build --locked --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppTide-rust-beta-windows-x64
+          path: rust/target/release/apptide-beta.exe
   test-and-package:
     runs-on: windows-latest
     steps:
