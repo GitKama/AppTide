@@ -1,0 +1,18 @@
+{
+  "name": "apptide",
+  "version": "0.1.0",
+  "description": "A local-first Windows software manager with a catalogue that learns from evidence.",
+  "author": "AppTide contributors",
+  "license": "MIT",
+  "main": "desktop/main.cjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "electron .",
+    "demo": "electron . --demo",
+    "test": "node --test test/*.test.cjs",
+    "scan": "node scripts/scan.cjs",
+    "package": "node scripts/package.cjs",
+    "test:desktop": "node scripts/desktop-smoke.cjs"
+  },
+  "devDependencies": { "@electron/packager": "20.3.0", "electron": "44.7.0" }
+}

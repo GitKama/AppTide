@@ -1,0 +1,33 @@
+'use strict';
+const { app } = require('electron');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+async function smoke(window, service, directory) {
+  const js = source => window.webContents.executeJavaScript(source);
+  const waitFor = async condition => { const deadline = Date.now() + 12000; while (!(await js(condition))) { if (Date.now() > deadline) throw new Error('UI wait timed out: ' + condition); await new Promise(r => setTimeout(r, 70)); } };
+  await waitFor("document.querySelectorAll('.app-row').length === 3");
+  assert.equal(await js("typeof require"), 'undefined');
+  await js("document.querySelector('.app-row').click()");
+  assert.ok(await js("document.querySelector('#details h2').textContent.length > 0"));
+  await fs.writeFile(path.join(directory, 'desktop.png'), (await window.webContents.capturePage()).toPNG());
+  window.setSize(850, 760); await new Promise(r => setTimeout(r, 200));
+  assert.ok(await js('document.documentElement.scrollWidth <= window.innerWidth'));
+  await fs.writeFile(path.join(directory, 'compact.png'), (await window.webContents.capturePage()).toPNG());
+  window.setSize(1320, 860);
+  await js("document.querySelector('#search').value='no-match';document.querySelector('#search').dispatchEvent(new Event('input'))");
+  assert.equal(await js("document.querySelector('#empty').hidden"), false);
+  await js("document.querySelector('#search').value='';document.querySelector('#search').dispatchEvent(new Event('input'));document.querySelector('#updateAll').click()");
+  await waitFor("document.querySelector('#planDialog').open");
+  assert.equal(await js("document.querySelectorAll('.plan-row').length"), 3);
+  await js("document.querySelector('#confirmPlan').click()");
+  await waitFor("document.querySelector('#updateCount').textContent === '0' && !document.querySelector('#scanButton').disabled");
+  assert.equal(service.state().receipts.filter(r => r.status === 'verified').length, 3);
+  await js("document.querySelector('[data-view=history]').click()");
+  assert.equal(await js("document.querySelectorAll('.receipt').length"), 3);
+  await fs.writeFile(path.join(directory, 'history.png'), (await window.webContents.capturePage()).toPNG());
+  const receipt = { passed: true, checks: ['isolated renderer', 'updates rendered', 'details selection', 'compact layout without overflow', 'search empty state', 'update plan preview', 'three synthetic updates verified', 'history receipts'], synthetic: true };
+  await fs.writeFile(path.join(directory, 'result.json'), JSON.stringify(receipt, null, 2));
+  console.log(JSON.stringify(receipt)); app.exit(0);
+}
+module.exports = { smoke };

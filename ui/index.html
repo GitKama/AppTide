@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AppTide</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 21 12 7h8l8 14M8 23c4-6 12 6 16 0"/></svg><span>AppTide</span></div>
+  <nav aria-label="Software manager"><button data-view="updates" class="nav active">Updates <span id="updateCount">0</span></button><button data-view="installed" class="nav">Installed apps <span id="installedCount">0</span></button><button data-view="catalog" class="nav">My catalogue</button><button data-view="history" class="nav">Activity</button><button data-view="settings" class="nav">Settings</button></nav>
+  <div class="sidebar-foot"><span class="privacy-dot"></span> Your catalogue stays here.<small>Free. Open source. Yours.</small><span class="version">Version 0.1.0 · Alpha</span></div>
+</aside>
+<main>
+  <div id="demoBanner" class="demo-banner" hidden>Demo workspace — synthetic apps and simulated operations. No software is changed.</div>
+  <header><div><h1 id="heading">Updates</h1><p id="subtitle">A little maintenance. Everything in one place.</p></div><div class="toolbar"><button id="scanButton" class="button secondary">Check for updates</button><button id="updateAll" class="button primary" disabled>Update all</button></div></header>
+  <div id="progress" class="progress" role="status" hidden><span id="phase"></span><button id="cancelButton" class="text-button">Stop queue</button></div>
+  <div id="notice" role="status" class="notice" hidden></div>
+  <section id="overview" class="overview"><span id="scanSummary">Your first scan builds your private software catalogue.</span><span id="lastScan">Not scanned yet</span></section>
+  <section id="workspace" class="workspace">
+    <div class="list-area"><div class="filterbar"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="search" type="search" placeholder="Find an app" aria-label="Find an app"></label><label class="system-filter"><input id="showSystem" type="checkbox"> System components</label></div><div class="table-head"><span>Application</span><span>Version</span><span>Status</span></div><div id="appList" class="app-list" role="list" aria-label="Applications"></div><div id="empty" class="empty" hidden><h2 id="emptyTitle"></h2><p id="emptyText"></p></div></div>
+    <aside id="details" class="details" aria-label="Application details"><div class="detail-placeholder"><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="8" y="7" width="32" height="34" rx="5"/><path d="M15 17h18M15 24h18M15 31h10"/></svg><h2>A clearer picture</h2><p>Select an app to see its source, version history, and update controls.</p></div></aside>
+  </section>
+  <section id="history" class="history" hidden></section>
+  <section id="settings" class="settings" hidden>
+    <h2>Updates on your terms</h2><div class="setting-row"><div><h3>Automatic updates</h3><p>Check once a day while AppTide is open. Only apps you explicitly allow are updated. No startup task is installed.</p></div><label class="toggle"><input id="automatic" type="checkbox"><span>Enabled</span></label></div>
+    <div class="setting-row"><div><h3>Portable applications</h3><p>Add a folder to discover EXE files, including apps outside WinGet. Scans cover three directory levels and up to 500 files per folder.</p></div><button id="portable" class="button secondary">Add a folder</button></div>
+    <div class="setting-row"><div><h3>Your local catalogue</h3><p>Installed apps, version observations, source watches, and receipts stay on this PC. AppTide sends no inventory or telemetry to a server.</p></div><button id="openData" class="button secondary">Open data folder</button></div>
+    <div class="setting-row"><div><h3>Coverage, honestly</h3><p>Windows registry, current-user Store apps, WinGet, and selected portable folders. Other users’ profiles, arbitrary scripts, and every possible portable format are outside this alpha’s scan.</p><p>WinGet and optional GitHub release checks use their respective online services. GitHub sources are watch-only; AppTide never guesses which asset to execute.</p></div></div>
+  </section>
+  <footer><span id="catalogSummary">Private catalogue · 0 observations</span><span>Windows software, together.</span></footer>
+</main>
+<dialog id="planDialog"><form method="dialog"><h2 id="planTitle">Review updates</h2><p id="planDescription"></p><div id="planApps"></div><p class="muted">Save your work in these apps. Administrator approval or installer interaction may be required.</p><div class="dialog-actions"><button class="button secondary" value="cancel">Cancel</button><button id="confirmPlan" class="button primary" type="button">Continue</button></div></form></dialog>
+<script src="app.js"></script>
+</body></html>
