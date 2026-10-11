@@ -1,5 +1,14 @@
 # AppTide validation
 
+## Rust 0.2.3-beta.1
+
+- 44 Rust tests passed; the opt-in external download test remains ignored by default. Formatting, Clippy with warnings denied and the optimized Windows build passed.
+- The critical regression models a 34-app queue: item four returns HTTP 404, its failed receipt is retained, and all 30 remaining items are attempted exactly once. Duplicate registrations remain unverified without blocking unrelated apps.
+- Verification scan failure, cancellation/reboot signals (including a visible new version) still stop remaining installers. Automatic retry blocks remain intact.
+- A real-file UI interaction test clicks View local logs and reads a temporary log without starting Explorer. Reader checks cover traversal rejection and a visible bounded-read notice; existing rotation checks still pass.
+- Native log-viewer captures at 1440x900 and 1040x700 were visually inspected. All public fixtures and captures are synthetic. Real local diagnostic evidence stayed private.
+- The public installer URL identified during diagnosis returned HTTP 404 on a read-only HEAD request. No third-party update, removal, alternative installer or hash bypass was executed as part of this fix. The regression proves queue behavior, not that an upstream vendor download was repaired.
+
 ## Rust 0.2.2-beta.1
 
 Validated locally on Windows x64 on 11 October 2026.

@@ -1,5 +1,13 @@
 # Changes
 
+## 0.2.3-beta.1 - 11 October 2026
+
+- Correct Update all semantics: one package download/installer failure no longer abandons unrelated updates. Keep individual failed/unverified receipts and return an aggregate attention result after attempting the remaining apps.
+- Stop for failed verification scans, persistence problems, cancellation and shared installer/reboot signals; keep exact targets, hash checks and automatic retry blocks.
+- Explain HTTP 404/403 download failures without guessing replacement installers.
+- Replace the unreliable Explorer log-folder launch with a built-in, bounded, read-only log viewer, with file selection, refresh and copy-folder-path controls.
+- Remove duplicate queue error banners. Add a 34-app regression with HTTP 404 at item four, plus scan/reboot/cancellation boundaries and a real-file UI log-viewer test.
+
 ## 0.2.2-beta.1 - 11 October 2026
 
 - Fix silent queue termination: show a persistent summary with verified, skipped, uncertain and unattempted counts, plus the app and reason that stopped execution.

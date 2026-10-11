@@ -54,6 +54,12 @@ struct SourceEditor {
     source: crate::custom::Source,
     error: Option<String>,
 }
+#[derive(Default)]
+struct LogViewer {
+    files: Vec<String>,
+    selected: usize,
+    text: String,
+}
 pub struct Tide {
     catalog: Catalog,
     warnings: Vec<String>,
@@ -88,6 +94,8 @@ pub struct Tide {
     pub update_rect: Option<Rect>,
     update_all_rect: Option<Rect>,
     confirm_rect: Option<Rect>,
+    logs_rect: Option<Rect>,
+    log_viewer: Option<LogViewer>,
     pub uninstall_rect: Option<Rect>,
     pub list_rect: Option<Rect>,
 }
@@ -135,10 +143,47 @@ pub fn style(ctx: &egui::Context) {
     }
 }
 impl Tide {
+    fn show_logs(&mut self) {
+        if self.demo {
+            self.log_viewer=Some(LogViewer { files:vec!["receipts/synthetic-example.log".into()],selected:0,text:"Synthetic download result\nHTTP 404: installer file not found\nThis app failed. Remaining independent updates continued.\nNo private file was read.".into() });
+            return;
+        }
+        self.log_viewer = Some(
+            match crate::diagnostics::log_files(std::path::Path::new(&self.directory)) {
+                Ok(files) => {
+                    let text = files
+                        .first()
+                        .map(|file| {
+                            crate::diagnostics::read_log(
+                                std::path::Path::new(&self.directory),
+                                file,
+                            )
+                            .unwrap_or_else(|e| format!("Cannot read log: {e}"))
+                        })
+                        .unwrap_or_else(|| "No diagnostic files have been recorded yet.".into());
+                    LogViewer {
+                        files,
+                        selected: 0,
+                        text,
+                    }
+                }
+                Err(e) => LogViewer {
+                    text: format!("Cannot list logs: {e}"),
+                    ..Default::default()
+                },
+            },
+        );
+    }
+    pub fn logs_preview(&mut self) {
+        if self.demo {
+            self.activity_preview();
+            self.show_logs();
+        }
+    }
     pub fn activity_preview(&mut self) {
         if self.demo {
             self.page = Page::Activity;
-            self.catalog.extra.insert("lastBatch".into(), serde_json::json!({"status":"attention", "summary":"Queue needs attention: 2 verified, 1 skipped, 1 need review, 2 not run.", "detail":"Stopped at Example helper: multiple installed registrations match this package. Review the remaining updates after checking this app."}));
+            self.catalog.extra.insert("lastBatch".into(), serde_json::json!({"status":"attention", "summary":"Queue finished with issues: 4 verified, 1 skipped, 1 need review, 0 not run.", "detail":"Example helper needs review. The remaining independent updates were attempted. Open its local log for details."}));
             self.catalog.receipts = vec![
                 serde_json::json!({"name":"Aster Notes","kind":"update","status":"verified","startedAt":"Synthetic demonstration","detail":"Confirmed by a fresh inventory.","exitCode":0}),
                 serde_json::json!({"name":"Example helper","kind":"update","status":"unverified","startedAt":"Synthetic demonstration","detail":"Multiple installed registrations match this package (1.0, 2.0). Review these installations before retrying; no automatic retry will run.","exitCode":0,"logFile":"synthetic-example.log"}),
@@ -336,6 +381,8 @@ impl Tide {
             update_rect: None,
             update_all_rect: None,
             confirm_rect: None,
+            logs_rect: None,
+            log_viewer: None,
             uninstall_rect: None,
             list_rect: None,
         }
@@ -663,11 +710,10 @@ impl Tide {
         self.list_rect = Some(output.inner_rect);
     }
     fn activity(&mut self, ui: &mut Ui) {
-        if ui
-            .add_enabled(!self.demo, egui::Button::new("Open local logs"))
-            .clicked()
-        {
-            open_data_folder(&self.directory);
+        let button = ui.button("View local logs");
+        self.logs_rect = Some(button.rect);
+        if button.clicked() {
+            self.show_logs();
         }
         ui.label("Logs contain app events; receipts contain WinGet output; batches contain queue plans and stop reasons. Keep these files private.");
         if self.catalog.receipts.is_empty() {
@@ -737,7 +783,15 @@ impl Tide {
                 Event::Done(result) => {
                     self.busy = false;
                     if let Err(e) = result {
-                        self.error = Some(e);
+                        // Queue summaries already persist above the list. Avoid repeating a long
+                        // error banner that pushes the useful content below the viewport.
+                        let summarized = self
+                            .catalog
+                            .extra
+                            .get("lastBatch")
+                            .and_then(|b| b["summary"].as_str())
+                            .is_some_and(|summary| e.starts_with(summary));
+                        self.error = if summarized { None } else { Some(e) };
                     }
                     if self.selected.is_none() {
                         self.selected = self
@@ -823,6 +877,66 @@ impl Tide {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(detail),|ui|{ui.set_clip_rect(detail);self.detail(ui);});
             }
         });
+        if let Some(viewer) = &mut self.log_viewer {
+            let mut open = true;
+            let mut refresh = false;
+            let previous = viewer.selected;
+            let size = ctx.content_rect().size();
+            egui::Window::new("Local logs")
+                .open(&mut open)
+                .default_size([size.x.min(900.0) - 60.0, size.y.min(650.0) - 80.0])
+                .show(&ctx, |ui| {
+                    ui.label("Private diagnostic files on this PC. Review before sharing.");
+                    ui.horizontal_wrapped(|ui| {
+                        egui::ComboBox::from_id_salt("diagnostic-file")
+                            .width(460.0)
+                            .selected_text(
+                                viewer
+                                    .files
+                                    .get(viewer.selected)
+                                    .map(String::as_str)
+                                    .unwrap_or("No log files"),
+                            )
+                            .show_ui(ui, |ui| {
+                                for (index, name) in viewer.files.iter().enumerate() {
+                                    ui.selectable_value(&mut viewer.selected, index, name);
+                                }
+                            });
+                        refresh = ui.button("Refresh logs").clicked();
+                        if ui.button("Copy folder path").clicked() {
+                            ui.ctx().copy_text(self.directory.clone());
+                        }
+                    });
+                    if viewer.selected != previous
+                        && let Some(file) = viewer.files.get(viewer.selected)
+                    {
+                        viewer.text = if self.demo {
+                            "Synthetic log preview. No private file was read.".into()
+                        } else {
+                            crate::diagnostics::read_log(
+                                std::path::Path::new(&self.directory),
+                                file,
+                            )
+                            .unwrap_or_else(|e| format!("Cannot read log: {e}"))
+                        };
+                    }
+                    egui::ScrollArea::both()
+                        .max_height((size.y - 250.0).max(180.0))
+                        .show(ui, |ui| {
+                            let mut text = viewer.text.as_str();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut text)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                });
+            if !open {
+                self.log_viewer = None;
+            } else if refresh {
+                self.show_logs();
+            }
+        }
         if let Some(editor) = &mut self.source_editor {
             let mut save = false;
             let mut cancel = false;
@@ -877,7 +991,7 @@ impl Tide {
         if let Some(plan) = self.plan.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide will check the installed versions again before running WinGet. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
+            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
             if cancel {
                 self.plan = None;
             }
@@ -1063,17 +1177,6 @@ fn open_settings() {
         let _ = c.spawn();
     }
 }
-fn open_data_folder(directory: &str) {
-    #[cfg(windows)]
-    {
-        // The catalogue directory is chosen locally; no log contents become shell commands.
-        let _ = std::process::Command::new("explorer.exe")
-            .arg(directory)
-            .spawn();
-    }
-    #[cfg(not(windows))]
-    let _ = directory;
-}
 fn open_url(url: &str) {
     if !url.starts_with("https://")
         || url
@@ -1128,6 +1231,54 @@ mod tests {
             assert!(viewport.contains_rect(app.update_rect.unwrap()));
             assert!(viewport.contains_rect(app.uninstall_rect.unwrap()));
         }
+    }
+    #[test]
+    fn activity_log_button_reads_a_real_file_without_explorer() {
+        let directory = std::env::temp_dir().join(format!(
+            "apptide-log-viewer-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir_all(directory.join("receipts")).unwrap();
+        let path = directory.join("receipts/download.log");
+        std::fs::write(&path, "HTTP 404: synthetic installer file missing").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = Tide::new(Service::open(Default::default(), true).unwrap(), &ctx);
+        // Synthetic worker; actual local log-reader code and UI click.
+        app.demo = false;
+        app.directory = directory.to_string_lossy().into_owned();
+        app.page = Page::Activity;
+        let size = Vec2::new(1040.0, 650.0);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, size, vec![]);
+        }
+        let pos = app.logs_rect.unwrap().center();
+        for pressed in [true, false] {
+            frame(
+                &mut app,
+                &ctx,
+                size,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+            );
+        }
+        let viewer = app.log_viewer.as_ref().unwrap();
+        assert_eq!(viewer.files, vec!["receipts/download.log"]);
+        assert!(viewer.text.contains("HTTP 404"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "HTTP 404: synthetic installer file missing"
+        );
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory.join("receipts")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
     #[test]
     fn update_all_confirmation_runs_three_apps_and_keeps_summary() {

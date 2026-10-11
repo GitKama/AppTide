@@ -4,9 +4,9 @@
 
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.2-beta.1/AppTide-0.2.2-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.2-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.3-beta.1/AppTide-0.2.3-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.3-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-Current release: **0.2.2-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
+Current release: **0.2.3-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
 
 ![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
@@ -67,14 +67,14 @@ Coming from the Electron alpha? Before the beta's first scan, **Settings → Imp
 
 ## Troubleshooting updates
 
-After a queue finishes or stops, AppTide shows how many apps were verified, skipped, need review or were not run. Open **Activity → Open local logs** for private application events, WinGet output and batch diagnostics. Apps whose versions or permissions changed after the preview are skipped; failures and uncertain installations still stop the queue for review. See [logs and queue troubleshooting](docs/TROUBLESHOOTING.md).
+After a queue finishes or stops, AppTide shows how many apps were verified, skipped, need review or were not run. Open **Activity → View local logs** for private application events, WinGet output and batch diagnostics. Apps whose versions or permissions changed after the preview are skipped; individual failures stay recorded while unrelated apps continue. A failed verification scan, cancellation or a reboot requirement still stops the queue. See [logs and queue troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Beta boundaries
 
 - Coverage is still growing. Some portable apps, extensions, drivers, custom installers and other users' software may be missing. Inventory counts are records and can include overlapping registrations.
 - WinGet CLI parsing rejects unsupported or truncated rows. Ambiguous identities and protected components are excluded from the corresponding executable actions.
 - Installers may require elevation, interaction, closed apps or a reboot. AppTide does not automatically accept installer agreements or promise unattended compatibility with every app.
-- A failed or uncertain result stops a batch and blocks automatic retries for that app. **Stop queue** lets the current installer finish; AppTide cannot roll back third-party changes.
+- A failed or uncertain result blocks automatic retries for that app; unrelated updates continue while verification remains available. **Stop queue** lets the current installer finish; AppTide cannot roll back third-party changes.
 - Automated tests simulate update and uninstall operations. Read-only live discovery and provider checks have been exercised; real third-party updates and removals have not yet been validated as part of this beta's test process.
 
 Read the [validation record](docs/VALIDATION.md) and [roadmap](docs/ROADMAP.md) for the evidence and next milestones.

@@ -100,6 +100,9 @@ fn run() -> Result<(), String> {
             if demo && args.iter().any(|arg| arg == "--activity-preview") {
                 app.activity_preview();
             }
+            if demo && args.iter().any(|arg| arg == "--logs-preview") {
+                app.logs_preview();
+            }
             Ok(Box::new(app))
         }),
     )

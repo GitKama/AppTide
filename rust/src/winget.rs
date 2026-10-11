@@ -188,6 +188,34 @@ pub struct Output {
     pub stdout: String,
     pub stderr: String,
 }
+pub fn failure_hint(code: i32) -> Option<&'static str> {
+    match code as u32 {
+        0x80190194 => Some(
+            "The installer download returned HTTP 404 (file not found). The package source points to an unavailable file. This update failed; AppTide will continue other apps and will not substitute another installer or bypass its hash.",
+        ),
+        0x80190193 => Some(
+            "The installer download returned HTTP 403 (access denied). Review the package's official download requirements. Other apps can continue.",
+        ),
+        _ => None,
+    }
+}
+pub fn queue_stop_code(code: i32) -> bool {
+    // User cancellation and Windows reboot/installer-lock signals apply to the whole queue.
+    matches!(
+        code as u32,
+        0x80004004
+            | 0x800704C7
+            | 1602
+            | 1618
+            | 1641
+            | 3010
+            | 0x8A150005
+            | 0x8A15006A
+            | 0x8A150077
+            | 0x8A150102
+            | 0x8A150109..=0x8A15010C | 0x8A15000A | 0x8A15003F
+    )
+}
 pub fn run(program: &str, args: &[String], timeout: Option<Duration>) -> Result<Output> {
     let mut command = Command::new(program);
     command

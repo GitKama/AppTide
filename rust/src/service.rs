@@ -472,10 +472,10 @@ impl Service {
         let cancelled = self.cancel.load(Ordering::Relaxed);
         let summary = format!(
             "{}: {verified} verified, {skipped} skipped, {attention} need review, {not_run} not run.",
-            if cancelled {
+            if cancelled || (result.is_err() && not_run > 0) {
                 "Queue stopped"
-            } else if result.is_err() {
-                "Queue needs attention"
+            } else if result.is_err() || attention > 0 {
+                "Queue finished with issues"
             } else if skipped > 0 {
                 "Queue finished with skips"
             } else {
@@ -527,6 +527,7 @@ impl Service {
                 self.warnings.join(" ")
             ));
         }
+        let mut issues = Vec::new();
         for (index, before) in plan.apps.iter().enumerate() {
             if self.cancel.load(Ordering::Relaxed) {
                 break;
@@ -580,8 +581,12 @@ impl Service {
                 }
                 Ok((out.code, complete))
             })();
+            let mut independent_apps_can_continue = false;
             match result {
                 Ok((code, complete)) => {
+                    // An individual package's failure must not block unrelated updates. Only
+                    // proceed while we still have a fresh inventory and no stop/reboot request.
+                    independent_apps_can_continue = complete && !winget::queue_stop_code(code);
                     let matches: Vec<_> = self
                         .catalog
                         .apps
@@ -609,10 +614,14 @@ impl Service {
                             .map(|a| a.version.as_str())
                             .collect::<Vec<_>>()
                     );
-                    receipt["detail"] = if state == "verified" {
+                    receipt["detail"] = if winget::queue_stop_code(code) {
+                        format!("WinGet requested cancellation, a reboot, or reported a shared installer/source problem (0x{:08X}). Remaining apps were not started; review the log before resuming.", code as u32)
+                    } else if state == "verified" {
                         "Confirmed by a fresh inventory.".to_string()
                     } else if !complete {
                         format!("Verification scan incomplete. {}", self.warnings.join(" "))
+                    } else if let Some(reason) = winget::failure_hint(code) {
+                        reason.to_string()
                     } else if matches.len() > 1 || after.is_some_and(|a| a.ambiguous) {
                         format!("Multiple installed registrations match this package ({}). WinGet exit code: {code}. Review these installations before retrying; no automatic retry will run.", matches.iter().map(|a| a.version.as_str()).collect::<Vec<_>>().join(", "))
                     } else {
@@ -644,11 +653,26 @@ impl Service {
             crate::knowledge::enrich(&mut self.catalog);
             self.save()?;
             status("Operation recorded", &self.catalog);
-            if !verified {
+            if !independent_apps_can_continue {
                 return Err(format!("Stopped at {}: {reason}", before.name));
             }
+            if !verified {
+                issues.push(before.name.clone());
+                status(
+                    &format!("{} needs review; continuing remaining apps…", before.name),
+                    &self.catalog,
+                );
+            }
         }
-        Ok(())
+        if issues.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} app(s) need review: {}. Other eligible apps were attempted; failed apps were not retried.",
+                issues.len(),
+                issues.join(", ")
+            ))
+        }
     }
 }
 pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
@@ -939,7 +963,7 @@ mod tests {
         assert_eq!(s.catalog.receipts[1]["status"], "skipped");
     }
     #[test]
-    fn duplicate_registrations_stop_with_versions_and_remaining_count() {
+    fn duplicate_registrations_are_unverified_but_independent_apps_continue() {
         let (mut s, p) = batch_fixture();
         let mut count = 0;
         let error = s
@@ -959,9 +983,14 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert_eq!(count, 1);
-        assert!(error.contains("2 not run"));
-        assert!(error.contains("Multiple installed registrations"));
+        assert_eq!(count, 3);
+        assert!(error.contains("0 not run"));
+        assert!(
+            s.catalog.receipts[0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("Multiple installed registrations")
+        );
         assert_eq!(s.catalog.receipts[0]["status"], "unverified");
         assert_eq!(
             s.catalog.receipts[0]["observedVersions"]
@@ -1032,7 +1061,103 @@ mod tests {
         );
     }
     #[test]
-    fn failed_installer_stops_and_preserves_exit_code() {
+    fn download_404_at_fourth_item_does_not_abandon_thirty_remaining_updates() {
+        let (mut s, p) = batch_fixture();
+        let template = p.apps[0].clone();
+        let mut ids = Vec::new();
+        s.catalog.apps.clear();
+        for index in 0..34 {
+            let uid = format!("fixture-{index:02}");
+            let app = App {
+                uid: uid.clone(),
+                key: format!("test:{index}"),
+                name: format!("Example app {index}"),
+                winget_id: Some(format!("Example.App{index}")),
+                ..template.clone()
+            };
+            s.catalog.apps.insert(uid.clone(), app);
+            ids.push(uid);
+        }
+        let plan = prepare(&s.catalog, "update", &ids).unwrap();
+        let mut attempted = Vec::new();
+        let error = s
+            .execute_with(
+                plan,
+                |_, _| {},
+                |_| Ok(true),
+                |s, kind, a| {
+                    attempted.push(a.uid.clone());
+                    if attempted.len() == 4 {
+                        Ok(winget::Output {
+                            code: 0x80190194u32 as i32,
+                            stdout: "Download request status is not success. HTTP 404".into(),
+                            stderr: String::new(),
+                        })
+                    } else {
+                        simulated_update(s, kind, a)
+                    }
+                },
+            )
+            .unwrap_err();
+        assert_eq!(attempted, ids);
+        assert!(error.contains("33 verified, 0 skipped, 1 need review, 0 not run"));
+        assert_eq!(s.catalog.receipts[3]["status"], "failed");
+        assert!(
+            s.catalog.receipts[3]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("HTTP 404")
+        );
+        assert_eq!(s.catalog.receipts[33]["status"], "verified");
+        assert_eq!(s.catalog.extra["lastBatch"]["status"], "attention");
+    }
+    #[test]
+    fn verification_scan_failure_still_stops_remaining_installers() {
+        let (mut s, p) = batch_fixture();
+        let mut scans = 0;
+        let mut installs = 0;
+        let error = s
+            .execute_with(
+                p,
+                |_, _| {},
+                |_| {
+                    scans += 1;
+                    Ok(scans == 1)
+                },
+                |s, k, a| {
+                    installs += 1;
+                    simulated_update(s, k, a)
+                },
+            )
+            .unwrap_err();
+        assert_eq!(installs, 1);
+        assert!(error.contains("2 not run"));
+        assert_eq!(s.catalog.receipts[0]["status"], "unverified");
+    }
+    #[test]
+    fn reboot_and_user_cancel_stop_even_if_new_version_is_visible() {
+        for code in [3010, 0x8A150109u32 as i32, 0x8A15010Cu32 as i32] {
+            let (mut s, p) = batch_fixture();
+            let mut installs = 0;
+            let error = s
+                .execute_with(
+                    p,
+                    |_, _| {},
+                    |_| Ok(true),
+                    |s, k, a| {
+                        installs += 1;
+                        let mut result = simulated_update(s, k, a)?;
+                        result.code = code;
+                        Ok(result)
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(installs, 1);
+            assert!(error.contains("2 not run"));
+        }
+    }
+    #[test]
+    fn failed_installers_preserve_exit_codes_and_attempt_remaining_apps() {
         let (mut s, p) = batch_fixture();
         let error = s
             .execute_with(
@@ -1048,8 +1173,8 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(error.contains("1603"));
-        assert_eq!(s.catalog.receipts.len(), 1);
+        assert!(error.contains("3 need review, 0 not run"));
+        assert_eq!(s.catalog.receipts.len(), 3);
         assert_eq!(s.catalog.receipts[0]["status"], "failed");
         assert_eq!(s.catalog.receipts[0]["exitCode"], 1603);
     }

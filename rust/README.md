@@ -1,9 +1,9 @@
 # AppTide Rust beta
 
-Version 0.2.2-beta.1 is the native Rust implementation alongside the Electron alpha.
+Version 0.2.3-beta.1 is the native Rust implementation alongside the Electron alpha.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
-**Build status:** compiled and validated locally on Windows x64. Forty automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
+**Build status:** compiled and validated locally on Windows x64. Forty-four automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
 
 ## Build and run
 
@@ -18,7 +18,7 @@ cargo build --release
 ```
 
 WinGet must be available through Windows App Installer for live package operations.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.2-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.3-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 
@@ -68,4 +68,4 @@ See [the implementation decision](../docs/RUST-BETA.md) for research and tradeof
 
 ## Queue diagnostics
 
-Activity shows a persistent queue summary and opens the local data folder. `logs/app.jsonl` records application events (rotated at 1 MiB with one previous file); `receipts/*.log` records WinGet commands, exit codes, stdout and stderr; `batches/*.json` records reviewed plans and final outcomes, including preflight failures. These files stay private. Stale items are skipped individually; failed or unverified execution still stops the queue with an explicit reason. See [troubleshooting](../docs/TROUBLESHOOTING.md).
+Activity shows a persistent queue summary and opens a built-in, read-only log viewer. `logs/app.jsonl` records application events (rotated at 1 MiB with one previous file); `receipts/*.log` records WinGet commands, exit codes, stdout and stderr; `batches/*.json` records reviewed plans and final outcomes, including preflight failures. These files stay private. Stale items are skipped individually; individual failed or unverified apps are recorded while other apps continue. Global scan/persistence failures, cancellation and reboot signals stop the queue. See [troubleshooting](../docs/TROUBLESHOOTING.md).
