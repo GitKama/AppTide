@@ -1,74 +1,106 @@
 # AppTide
 
-A free, open-source Windows software manager with a private catalogue that learns from evidence.
+**Your Windows apps, updates and software catalogue in one place.**
 
-Find what is installed, update supported apps together, remove apps deliberately, and keep a useful history of what actually changed. AppTide starts with WinGet and makes gaps in its coverage visible.
+AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**Status: native Rust 0.2.1-beta.1; Electron 0.1.1 alpha remains available.** Real Windows inventory and WinGet execution are implemented. This is an early software manager, not a universal updater or a promise that every installer works unattended. See [changes](CHANGELOG.md).
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.1-beta.1/AppTide-0.2.1-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.1-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-**Try the native Rust beta:** [AppTide 0.2.1-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.1-beta.1) uses a custom egui immediate-mode interface, a virtualized app list, and fixed update/uninstall controls. The portable executable has no Electron or JavaScript runtime. See [beta scope and build instructions](rust/README.md) and [research and architecture decisions](docs/RUST-BETA.md). The beta includes opt-in automatic WinGet updates while open, bounded portable discovery, editable release watches, and a bundled software-recipe database. Users can add their own tracked apps, official sources and update notes. AppTide checks its own beta releases at startup and offers a verified update-and-restart action. See [catalogue design](docs/CATALOGUE.md), [self-updates](docs/SELF-UPDATES.md), and [release history policy](docs/RELEASING.md).
+Current release: **0.2.1-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
 
-![Rust beta showing synthetic demonstration apps](docs/rust-beta.png)
+![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
-![AppTide showing synthetic demonstration apps](docs/desktop-demo.png)
+## Get started
 
-## Electron alpha capabilities
+1. Download the beta ZIP above and extract the **entire archive** to a writable folder.
+2. Launch **`AppTide-Beta.exe`** and choose **Check for updates**.
+3. Select an app to inspect its source and available actions, or preview a batch of supported updates.
 
-- Inventory from machine/current-user uninstall registry records (32-bit and 64-bit), current-user AppX packages, and WinGet.
-- Optional portable-folder discovery: EXE metadata, three directory levels, 500 files per folder, no symlink traversal or execution.
-- WinGet updates with an exact package/version preview, serialized execution, fresh preflight, and post-operation verification.
-- WinGet uninstalls with explicit confirmation. Unmatched apps have a Windows Settings fallback.
-- Per-app exclusions and opt-in automatic updates, checked daily **while AppTide is open**. No background service or startup task.
-- A persistent local catalogue: first/last sightings, observed versions, preferences, source coverage, and operation receipts.
-- Bounded WinGet-log analysis that adds deduplicated package sightings. Logs never grant execution authority.
-- Manually refreshed, watch-only GitHub release sources for custom catalogue entries. No automatic asset execution.
-- A synthetic demo that exercises the interface and operation flow without changing real software.
+The beta targets **Windows x64**. Live package operations require WinGet, supplied through Windows App Installer. Release binaries are currently unsigned. Keep the packaged executable name and companion files together so AppTide can update itself.
 
-## Run the Electron alpha
+Automatic app updates are **off by default**. Enable them in Settings and opt in each app you want managed automatically. Checks run hourly while AppTide is open; there is no installed background service or startup task.
 
-On Windows x64 with WinGet available through App Installer:
+## What AppTide does today
 
-1. Download the Windows alpha ZIP from this repository's Releases, when available.
-2. Extract the **entire** ZIP to a folder.
-3. Run `AppTide.exe`, then **Check for updates**.
+| Feature | Available in the Rust beta |
+| --- | --- |
+| Installed software inventory | Machine and current-user registry entries, current-user AppX packages, WinGet, and executable metadata from portable folders you choose. |
+| Updates and removals | Individual and batch WinGet updates, individual uninstalls, exact-package previews, fresh checks before execution, and result verification. Unmatched apps can open Windows Settings. |
+| Visible action controls | Long app lists are virtualized; details scroll independently and update/uninstall controls stay visible. |
+| Your own catalogue | Add manually tracked apps, maintain versions, attach official source links and GitHub projects, and save update notes. |
+| Coverage beyond WinGet | A bundled database of 14 product/family recipes plus Steam and Microsoft Store ownership rules identifies known update routes. |
+| GitHub release watches | Track public stable releases, compare supported version formats, and open the project's releases page. Watches refresh during scans with caching, or on request. |
+| Local history | Retain version observations, first/last sightings, preferences, bounded WinGet-log evidence, and verified, failed or unverified operation receipts. |
+| AppTide self-updates | Check for newer AppTide releases at startup and offer an update-and-restart action with download verification and package backups. |
 
-The portable distribution does not require a separate Node.js install. The alpha binary is unsigned. Keep its DLLs, resource folders, and EXE together.
+WinGet can recognize software installed outside WinGet, so you do not need to reinstall everything through a new package manager. Execution still requires a reliable package match. For other apps, AppTide shows an official update route, a release watch, or **Needs research** rather than guessing an installer.
 
-To develop from source, install Node.js 22 or newer and run:
+## Make the catalogue yours
+
+Open **My catalogue → Add custom app** to track software yourself. Save its name, version, official HTTPS page, optional GitHub project and update notes. Use **Edit my catalogue entry** to maintain it later, or attach sources and notes to a detected app.
+
+![AppTide custom catalogue editor using synthetic demonstration data](docs/catalogue-editor.png)
+
+Detected names and versions remain tied to the inventory; manually tracked entries are clearly identified. **Stop tracking** retains history without uninstalling software.
+
+The bundled recipes include routes for products such as ExifToolGUI, Meetily, Creative Cloud, NVIDIA software, Everything, browsers and game launchers. Each recipe records its public source and review date. These entries provide recognition and instructions; **custom routes and GitHub watches do not automatically download or execute third-party installers**.
+
+See [how the catalogue works and how to contribute recipes](docs/CATALOGUE.md).
+
+## AppTide keeps itself up to date
+
+At startup, AppTide checks this repository's releases in the background, including newer betas. Settings provides a manual check and an option to disable startup checks.
+
+When a release is available, **Update AppTide and restart** verifies the download's size and SHA-256 digest, stages the package, retains the previous package files, and relaunches with the same private catalogue. Replacement failures trigger rollback. The portable folder must be writable; the updater does not request elevation.
+
+See [self-update behavior, recovery and test coverage](docs/SELF-UPDATES.md). The current download and restart handoff have been tested separately; a complete update from the production banner to a future release remains to be validated. Hash verification does not replace publisher signing.
+
+## Private by design
+
+Your catalogue lives in **`%LOCALAPPDATA%\AppTide-Beta`**. Scans accumulate observations and version history; operation receipts record what could actually be verified. Catalogue saves retain a backup.
+
+This “learning” uses structured records and reproducible rules. It requires no AI model, and log text never becomes an installer command or grants an app permission to update. Private observations are not automatically contributed to the public database.
+
+AppTide has no telemetry and does not upload your inventory. WinGet and public GitHub checks contact their respective services. Public screenshots and test fixtures use synthetic software data.
+
+Coming from the Electron alpha? Before the beta's first scan, **Settings → Import alpha catalogue** can copy supported data from `%LOCALAPPDATA%\AppTide` while preserving the original. Automatic-update consent is reset. See [data and migration](rust/README.md#data-and-migration).
+
+## Beta boundaries
+
+- Coverage is still growing. Some portable apps, extensions, drivers, custom installers and other users' software may be missing. Inventory counts are records and can include overlapping registrations.
+- WinGet CLI parsing rejects unsupported or truncated rows. Ambiguous identities and protected components are excluded from the corresponding executable actions.
+- Installers may require elevation, interaction, closed apps or a reboot. AppTide does not automatically accept installer agreements or promise unattended compatibility with every app.
+- A failed or uncertain result stops a batch and blocks automatic retries for that app. **Stop queue** lets the current installer finish; AppTide cannot roll back third-party changes.
+- Automated tests simulate update and uninstall operations. Read-only live discovery and provider checks have been exercised; real third-party updates and removals have not yet been validated as part of this beta's test process.
+
+Read the [validation record](docs/VALIDATION.md) and [roadmap](docs/ROADMAP.md) for the evidence and next milestones.
+
+## Build and contribute
+
+The active application is in **[`rust/`](rust/)**. On Windows x64, use Rust via rustup and the Microsoft C++ Build Tools with a Windows SDK. The repository pins its Rust toolchain in [`rust/rust-toolchain.toml`](rust/rust-toolchain.toml).
 
 ```powershell
-npm ci
-npm test
-npm start
+cd rust
+cargo test --locked
+cargo run --locked -- --demo
+cargo build --locked --release
+.\target\release\apptide-beta.exe
 ```
 
-```powershell
-npm run demo           # Synthetic inventory and simulated operations
-npm run scan           # Read-only live scan; prints aggregate coverage
-npm run test:desktop   # Synthetic Electron interaction tests and screenshots
-npm run package       # Build dist/AppTide-win32-x64
-```
+Demo mode uses synthetic inventory and simulated operations. Use it for screenshots and UI work. Run `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings` before submitting a change.
 
-Packaging refuses to overwrite an existing output. Set `APPTIDE_PACKAGE_OUT` to a new directory for another build. Live inventory uses the Windows PowerShell script in `scripts/inventory.ps1`. AppTide does not change execution policy; if local policy blocks the script, the scan reports the failure.
+Contributions are welcome: improve detection, add narrowly matched recipes backed by official sources, test in disposable Windows environments, or help refine the interface. Never include raw personal catalogues, installed-app lists, machine paths, credentials or installer logs in public issues or pull requests.
 
-## What “learns” means
+- [Native build instructions and implementation scope](rust/README.md)
+- [Rust UI and architecture decisions](docs/RUST-BETA.md)
+- [Catalogue format, sources and recipe contributions](docs/CATALOGUE.md)
+- [Contribution guidelines](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+- [GitHub checks](https://github.com/GitKama/AppTide/actions) · [Report an issue](https://github.com/GitKama/AppTide/issues)
 
-Every successful scan adds observations to a private catalogue under `%LOCALAPPDATA%\AppTide-Beta` (Rust) or `%LOCALAPPDATA%\AppTide` (Electron). WinGet-correlated identities survive registry-key changes, version history is retained, and absent records remain historical. Local WinGet logs add evidence that a package ID was seen. Operation receipts distinguish a verified result from an exit code that merely reported success.
+## Project history
 
-This is deterministic evidence collection, **not an AI model**, web-wide installer discovery, or automatic trust assignment. A GitHub release watch records a reviewed bundled source or one the user explicitly supplies. It does not prove that a release asset is safe, compatible, or newer than an arbitrary installed version string.
+AppTide began as an Electron alpha and moved to a native Rust beta in the 0.2 series. The original source, release tags, downloads and changelog remain available so the development history stays visible. The top-level Node.js application is the legacy alpha; new native development belongs in `rust/`.
 
-No private inventory, logs, credentials, or machine paths belong in this repository. AppTide itself has no telemetry. WinGet source requests and optional public GitHub API requests still use their providers' services.
+[Browse all releases](https://github.com/GitKama/AppTide/releases) · [Electron alpha source and instructions](https://github.com/GitKama/AppTide/tree/v0.1.1-alpha) · [Release and versioning policy](docs/RELEASING.md)
 
-## Limits worth understanding
-
-- Inventory counts are records, not deduplicated counts of distinct products. Registry entries and WinGet/AppX entries may overlap.
-- Some portable apps, scripts, browser extensions, game content, drivers, other users' apps, and custom installers are outside this alpha's coverage.
-- WinGet CLI table parsing fails closed on unsupported or truncated rows. Structured WinGet integration is a priority.
-- Only unambiguous WinGet entries are actionable. Protected components cannot be removed in AppTide.
-- Installer agreements are not automatically accepted. Elevation, running apps, licensing, reboots, and installer-specific behavior can prevent unattended updates.
-- “Stop queue” waits for the current installer and skips the remaining apps. AppTide does not forcibly kill installers or roll back third-party changes.
-- An uncertain or failed result stops a batch and blocks unattended retry for that app. Review locally and perform a successful manual operation before retrying automatically.
-- GitHub release watches are refreshed manually in this alpha. They are not an alternate installation provider yet.
-- Public demo screenshots and tests use synthetic software data. No real app update or removal was used to validate this initial release.
-
-See [research](docs/RESEARCH.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), and [validation](docs/VALIDATION.md). Contributions are welcome under the [MIT licence](LICENSE).
+Free and open source under the **[MIT licence](LICENSE)**.
