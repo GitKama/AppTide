@@ -61,7 +61,7 @@ pub fn detect(a: &App) -> Option<Knowledge> {
         return Some(Knowledge { recipe: "steam-game".into(), owner: "Steam".into(), instructions: "Open Steam Library, select this game, then Properties > Updates. Steam owns its downloads and removal. AppTide cannot independently confirm its latest build.".into(), source: "https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C".into(), evidence: "Numeric Steam application ID in the uninstall registration".into(), revision: DATABASE.revision.clone(), ..Default::default() });
     }
     if a.kind == "appx" && a.extra.get("signatureKind").and_then(|v| v.as_str()) == Some("Store") {
-        return Some(Knowledge { recipe: "microsoft-store".into(), owner: "Microsoft Store".into(), instructions: "Open Microsoft Store > Library to check downloads and updates. Store-signed identity identifies the channel; it does not prove an update is available.".into(), source: "https://support.microsoft.com/en-us/windows/apps/turn-on-automatic-app-updates".into(), evidence: "Windows reports a Store-signed AppX package".into(), revision: DATABASE.revision.clone(), ..Default::default() });
+        return Some(Knowledge { recipe: "microsoft-store".into(), owner: "Microsoft Store".into(), instructions: "Open AppTide > Microsoft Store to check and apply Store updates, or open Store Downloads. Store manages this separate batch; a Store signature alone does not prove an update is available.".into(), source: "https://support.microsoft.com/en-us/windows/apps/turn-on-automatic-app-updates".into(), evidence: "Windows reports a Store-signed AppX package".into(), revision: DATABASE.revision.clone(), ..Default::default() });
     }
     if !["registry", "portable"].contains(&a.kind.as_str()) {
         return None;

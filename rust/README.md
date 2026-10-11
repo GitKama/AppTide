@@ -1,9 +1,9 @@
 # AppTide Rust beta
 
-Version 0.2.3-beta.1 is the native Rust implementation alongside the Electron alpha.
+Version 0.2.4-beta.1 is the native Rust implementation alongside the Electron alpha.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
-**Build status:** compiled and validated locally on Windows x64. Forty-four automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
+**Build status:** compiled and validated locally on Windows x64. Fifty-five automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
 
 ## Build and run
 
@@ -18,11 +18,13 @@ cargo build --release
 ```
 
 WinGet must be available through Windows App Installer for live package operations.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.3-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.4-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 
 - Native Rust registry inventory (machine/user, 32/64 bit), plus current-user AppX inventory through a fixed, read-only Windows PowerShell command.
+- Microsoft Store update checks and confirmed bulk updates through the installed consumer Store CLI, with local logs and fresh installed-version verification. See [Store support and metadata](../docs/MICROSOFT-STORE.md).
+- Friendly AppX names and publishers; bounded, read-only executable metadata fallbacks for incomplete desktop registrations.
 - WinGet discovery, individual/batch updates, and individual removals. A preview is followed by a fresh preflight, serialized operations, and inventory verification.
 - Private schema-1 catalogue, version observations, pause preferences, bounded WinGet-log sightings, and receipts.
 - A custom immediate-mode UI: virtualized app rows, a separate details scroll area, and update/uninstall controls outside both scrolling areas.

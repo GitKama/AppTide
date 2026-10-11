@@ -8,6 +8,7 @@ mod portable;
 mod releases;
 mod self_update;
 mod service;
+mod store;
 mod ui;
 mod winget;
 use std::path::PathBuf;
@@ -15,7 +16,11 @@ fn main() {
     if let Err(e) = run() {
         #[cfg(windows)]
         if !std::env::args().any(|arg| {
-            arg == "--scan-report" || arg == "--apply-self-update" || arg == "--self-update-report"
+            arg == "--scan-report"
+                || arg == "--apply-self-update"
+                || arg == "--self-update-report"
+                || arg == "--inventory-report"
+                || arg == "--store-report"
         }) {
             use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
             let text: Vec<u16> = e.encode_utf16().chain(Some(0)).collect();
@@ -42,6 +47,22 @@ fn run() -> Result<(), String> {
             .cloned()
     };
     let demo = args.iter().any(|a| a == "--demo");
+    if let Some(path) = value("--inventory-report") {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&inventory::read()?).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    if let Some(path) = value("--store-report") {
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&store::check_output(&store::run(false)?)?).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     if let Some(path) = value("--apply-self-update") {
         return self_update::apply(std::path::Path::new(&path));
     }
@@ -102,6 +123,9 @@ fn run() -> Result<(), String> {
             }
             if demo && args.iter().any(|arg| arg == "--logs-preview") {
                 app.logs_preview();
+            }
+            if demo && args.iter().any(|arg| arg == "--store-preview") {
+                app.store_preview();
             }
             Ok(Box::new(app))
         }),

@@ -1,5 +1,14 @@
 # Changes
 
+## 0.2.4-beta.1 — 11 October 2026
+
+- Add a Microsoft Store page with read-only checks, a separate bulk-update preview/confirmation, a fresh preflight, private output logs and installed-version verification through the installed consumer Store CLI.
+- Keep Store-owned batches separate from exact-version WinGet updates; explain dependencies, pause limitations, unavailable clients and uncertain outcomes. Never infer success solely from exit code zero.
+- Resolve friendly AppX names and readable publisher metadata while preserving raw package identity. Show architecture and metadata provenance in app details.
+- Fill missing registry metadata from matching local executable resources, with bounded discovery, helper/link exclusions and conflict rejection. Existing registry values remain authoritative.
+- Pass inventory payloads through stdin to avoid Windows command-length limits; cover multiple-record PowerShell enumeration and preserve associations when only the publisher display name changes.
+- Add regression coverage for metadata, Store parsing, stale/failed preflight, unchanged versions and actual confirmation clicks at desktop and compact sizes. Real Store installations remain a user acceptance check.
+
 ## 0.2.3-beta.1 - 11 October 2026
 
 - Correct Update all semantics: one package download/installer failure no longer abandons unrelated updates. Keep individual failed/unverified receipts and return an aggregate attention result after attempting the remaining apps.

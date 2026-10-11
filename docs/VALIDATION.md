@@ -1,5 +1,14 @@
 # AppTide validation
 
+## Rust 0.2.4-beta.1
+
+- 55 Rust tests passed; the opt-in public-download test remains ignored by default. Formatting, Clippy with warnings denied and the optimized Windows x64 build passed using the repository's static MSVC runtime configuration.
+- Store tests cover wrapped table rows, count mismatches, truncated/unreadable output, unique native identity matching, changed/failed preflight, a zero exit with no version change, and verified version advances without losing the existing catalogue.
+- Actual egui pointer events open and confirm the Store preview through the worker at 1440x900 and 1040x650. Native synthetic Store-page captures at 1440x900 and 1040x700 were visually checked.
+- Metadata tests cover multiple PowerShell records, a 100,000-byte stdin payload, preserving populated registry fields, and retaining source associations when only a package's publisher display name changes.
+- The release executable completed real read-only inventory and Store checks, plus a full scan against a separate private catalogue copy. Existing receipts and private history were retained. No real Store or WinGet update, uninstall, registration change, alias change or policy change was executed.
+- Store installation remains a user acceptance check. The installed Store client is a preview CLI with human-readable output. Unsupported/localized tables fail explicitly; missing aliases offer the Store UI. Store marketing names can differ from AppX names, so some otherwise successful changes remain unverified. See [Store support](MICROSOFT-STORE.md).
+
 ## Rust 0.2.3-beta.1
 
 - 44 Rust tests passed; the opt-in external download test remains ignored by default. Formatting, Clippy with warnings denied and the optimized Windows build passed.

@@ -4,9 +4,9 @@
 
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.3-beta.1/AppTide-0.2.3-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.3-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.4-beta.1/AppTide-0.2.4-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.4-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-Current release: **0.2.3-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
+Current release: **0.2.4-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
 
 ![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
@@ -24,7 +24,8 @@ Automatic app updates are **off by default**. Enable them in Settings and opt in
 
 | Feature | Available in the Rust beta |
 | --- | --- |
-| Installed software inventory | Machine and current-user registry entries, current-user AppX packages, WinGet, and executable metadata from portable folders you choose. |
+| Installed software inventory | Registry, current-user AppX, WinGet and chosen portable folders. Friendly Store names, readable vendors, installed versions, and local metadata fallbacks with source labels. |
+| Microsoft Store updates | Check pending Store updates, review the Store batch, apply through Microsoft's installed client, and inspect logs and installed-version verification. |
 | Updates and removals | Individual and batch WinGet updates, individual uninstalls, exact-package previews, fresh checks before execution, and result verification. Unmatched apps can open Windows Settings. |
 | Visible action controls | Long app lists are virtualized; details scroll independently and update/uninstall controls stay visible. |
 | Your own catalogue | Add manually tracked apps, maintain versions, attach official source links and GitHub projects, and save update notes. |
@@ -34,6 +35,14 @@ Automatic app updates are **off by default**. Enable them in Settings and opt in
 | AppTide self-updates | Check for newer AppTide releases at startup and offer an update-and-restart action with download verification and package backups. |
 
 WinGet can recognize software installed outside WinGet, so you do not need to reinstall everything through a new package manager. Execution still requires a reliable package match. For other apps, AppTide shows an official update route, a release watch, or **Needs research** rather than guessing an installer.
+
+## Update Microsoft Store apps
+
+Open **Microsoft Store → Check Store updates → Update Store apps…**. AppTide uses Microsoft's consumer Store CLI when available, rechecks the preview, saves output locally and verifies installed versions. The Store owns this separate bulk operation, including dependencies; AppTide's per-app pause settings do not apply. Missing client or unsupported output offers Store Downloads instead.
+
+See [Store support, richer detection and current limitations](docs/MICROSOFT-STORE.md).
+
+![Microsoft Store update preview in AppTide, using synthetic demonstration apps](docs/store-beta.png)
 
 ## Make the catalogue yours
 

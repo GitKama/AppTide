@@ -9,6 +9,7 @@ AppTide retains public commits, annotated release notes, tags and downloadable a
 - `0.2.1-beta.1`: private catalogue editor and AppTide self-updates.
 - `0.2.2-beta.1`: queue recovery, explicit stop reasons and local diagnostics.
 - `0.2.3-beta.1`: independent batch failure handling and an in-app log viewer.
+- `0.2.4-beta.1`: richer installed metadata and Microsoft Store bulk-update support.
 - Subsequent small changes increment the patch version, with a beta suffix until stability criteria are met. Additional candidates of the same milestone increment the beta number. A final stable version removes the prerelease suffix.
 
 ## Release checklist

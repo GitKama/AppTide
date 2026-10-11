@@ -5,6 +5,7 @@ use std::time::Duration;
 pub fn read() -> Result<Vec<App>> {
     use winreg::{RegKey, enums::*};
     let mut apps = vec![];
+    let mut hints = vec![];
     for (hive, label, scope) in [
         (HKEY_LOCAL_MACHINE, "LocalMachine", "machine"),
         (HKEY_CURRENT_USER, "CurrentUser", "user"),
@@ -32,8 +33,14 @@ pub fn read() -> Result<Vec<App>> {
                 if name.is_empty() {
                     continue;
                 }
+                let key = format!("registry:{label}:{label_view}:{key}");
+                if get("DisplayVersion").trim().is_empty() || get("Publisher").trim().is_empty() {
+                    hints.push(
+                        serde_json::json!({"key":key,"name":name,"displayIcon":get("DisplayIcon"),"location":get("InstallLocation")}),
+                    );
+                }
                 apps.push(App {
-                    key: format!("registry:{label}:{label_view}:{key}"),
+                    key,
                     name,
                     version: get("DisplayVersion"),
                     publisher: get("Publisher"),
@@ -42,41 +49,65 @@ pub fn read() -> Result<Vec<App>> {
                     kind: "registry".into(),
                     protected: app.get_value::<u32, _>("SystemComponent").unwrap_or(0) == 1
                         || app.get_value::<u32, _>("NoRemove").unwrap_or(0) == 1,
+                    extra: [("metadataSources".into(), serde_json::json!({"name":"Registry DisplayName","publisher":if get("Publisher").trim().is_empty(){"Not reported"}else{"Registry Publisher"},"version":if get("DisplayVersion").trim().is_empty(){"Not reported"}else{"Registry DisplayVersion"}})),
+                        ("installDate".into(), get("InstallDate").into())].into(),
                     ..Default::default()
                 });
             }
         }
     }
-    // The beta uses the installed Windows AppX cmdlet for current-user packages.
-    // This fixed, read-only script never contains user input or changes script policy.
-    let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $apps=@(Get-AppxPackage -ErrorAction Stop | Where-Object {-not $_.IsResourcePackage} | ForEach-Object { @{key=('appx:'+$_.PackageFamilyName);name=$_.Name;version=$_.Version.ToString();publisher=$_.Publisher;scope='user';kind='appx';signatureKind=[string]$_.SignatureKind;location=[string]$_.InstallLocation;protected=[bool]($_.NonRemovable -or $_.IsFramework)} }); ConvertTo-Json -InputObject $apps -Depth 4 -Compress"#;
+    // Data is passed as base64 JSON to a fixed read-only script, never interpolated as code.
     use base64::Engine;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(
-        script
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
-            .collect::<Vec<_>>(),
+    let encoded =
+        base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&hints).unwrap());
+    let script = format!(
+        "& {{ {} }} -RegistryJson ([Console]::In.ReadToEnd())",
+        include_str!("../scripts/inventory-metadata.ps1")
     );
-    let program =
-        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into()))
-            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    let out = crate::winget::run(
-        &program.to_string_lossy(),
-        &[
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-EncodedCommand".into(),
-            encoded,
-        ],
-        Some(Duration::from_secs(90)),
-    )?;
+    let out = powershell_input(&script, 120, Some(encoded.into_bytes()))?;
     if out.code != 0 {
         return Err("AppX inventory failed; previous catalogue preserved.".into());
     }
-    let appx: Vec<App> = serde_json::from_str(out.stdout.trim().trim_start_matches('\u{feff}'))
-        .map_err(|e| format!("AppX inventory unreadable: {e}"))?;
+    let report: serde_json::Value =
+        serde_json::from_str(out.stdout.trim().trim_start_matches('\u{feff}'))
+            .map_err(|e| format!("AppX inventory unreadable: {e}"))?;
+    let appx: Vec<App> =
+        serde_json::from_value(report["apps"].clone()).map_err(|e| e.to_string())?;
+    for metadata in report["metadata"].as_array().into_iter().flatten() {
+        if let Some(app) = apps
+            .iter_mut()
+            .find(|a| Some(a.key.as_str()) == metadata["key"].as_str())
+        {
+            apply_metadata(app, metadata);
+        }
+    }
     apps.extend(appx);
     Ok(deduplicate_mirrors(apps))
+}
+pub fn apply_metadata(app: &mut App, metadata: &serde_json::Value) {
+    for field in ["publisher", "version"] {
+        let current = if field == "publisher" {
+            &mut app.publisher
+        } else {
+            &mut app.version
+        };
+        let value = metadata[field].as_str().unwrap_or("").trim();
+        if current.trim().is_empty() && !value.is_empty() {
+            *current = value.into();
+            app.extra
+                .entry("metadataSources".into())
+                .or_insert_with(|| serde_json::json!({}))[field] = if field == "publisher" {
+                "Executable CompanyName"
+            } else {
+                metadata["versionSource"]
+                    .as_str()
+                    .unwrap_or("Executable ProductVersion")
+            }
+            .into();
+            app.extra
+                .insert("metadataFile".into(), metadata["metadataFile"].clone());
+        }
+    }
 }
 #[cfg(not(windows))]
 pub fn read() -> Result<Vec<App>> {
@@ -84,6 +115,13 @@ pub fn read() -> Result<Vec<App>> {
 }
 
 pub fn powershell(script: &str, timeout: u64) -> Result<crate::winget::Output> {
+    powershell_input(script, timeout, None)
+}
+fn powershell_input(
+    script: &str,
+    timeout: u64,
+    input: Option<Vec<u8>>,
+) -> Result<crate::winget::Output> {
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(
         script
@@ -94,7 +132,7 @@ pub fn powershell(script: &str, timeout: u64) -> Result<crate::winget::Output> {
     let program =
         std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into()))
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    crate::winget::run(
+    crate::winget::run_with_input(
         &program.to_string_lossy(),
         &[
             "-NoProfile".into(),
@@ -103,6 +141,7 @@ pub fn powershell(script: &str, timeout: u64) -> Result<crate::winget::Output> {
             encoded,
         ],
         Some(Duration::from_secs(timeout)),
+        input,
     )
 }
 pub fn deduplicate_mirrors(mut apps: Vec<App>) -> Vec<App> {
@@ -134,6 +173,56 @@ pub fn deduplicate_mirrors(mut apps: Vec<App>) -> Vec<App> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn metadata_script_processes_multiple_records_without_running_executables() {
+        let script = format!(
+            r#"$p=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'; $v=[Diagnostics.FileVersionInfo]::GetVersionInfo($p); $rows=@(@{{key='first';name=$v.ProductName;displayIcon=$p}},@{{key='second';name=$v.ProductName;displayIcon=$p}},@{{key='wrong';name='Unrelated synthetic product';displayIcon=$p}}); $data=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $rows))); & {{ {} }} -RegistryJson $data -MetadataOnly"#,
+            include_str!("../scripts/inventory-metadata.ps1")
+        );
+        let out = powershell(&script, 20).unwrap();
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        let value: serde_json::Value = serde_json::from_str(out.stdout.trim()).unwrap();
+        let rows = value["metadata"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["key"], "first");
+        assert_eq!(rows[1]["key"], "second");
+        assert!(
+            rows.iter()
+                .all(|r| !r["version"].as_str().unwrap().is_empty())
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn large_inventory_payload_uses_stdin_without_command_line_limits() {
+        let out = powershell_input(
+            "[Console]::Write([Console]::In.ReadToEnd().Length)",
+            20,
+            Some(vec![b'a'; 100_000]),
+        )
+        .unwrap();
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        assert_eq!(out.stdout.trim(), "100000");
+    }
+    #[test]
+    fn metadata_fills_gaps_without_overwriting_registration() {
+        let mut app = App {
+            publisher: "Registered vendor".into(),
+            ..Default::default()
+        };
+        apply_metadata(
+            &mut app,
+            &serde_json::json!({"publisher":"File vendor","version":"2.4","metadataFile":"example.exe"}),
+        );
+        assert_eq!(app.publisher, "Registered vendor");
+        assert_eq!(app.version, "2.4");
+        assert_eq!(
+            app.extra["metadataSources"]["version"],
+            "Executable ProductVersion"
+        );
+        apply_metadata(&mut app, &serde_json::json!({"version":"9.0"}));
+        assert_eq!(app.version, "2.4");
+    }
     #[test]
     fn deduplicates_only_identical_current_user_mirrors() {
         let a = App {

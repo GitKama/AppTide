@@ -128,6 +128,156 @@ impl Service {
         self.save()?;
         Ok(complete)
     }
+    pub fn check_store(&mut self) -> Result<crate::store::Check> {
+        let result = if self.demo {
+            Ok(crate::store::demo_check())
+        } else {
+            crate::store::run(false).and_then(|out| {
+                fs::create_dir_all(self.directory.join("logs")).map_err(|e| e.to_string())?;
+                fs::write(
+                    self.directory.join("logs/store-check.log"),
+                    format!("Exit: {}\n{}\n{}", out.code, out.stdout, out.stderr),
+                )
+                .map_err(|e| e.to_string())?;
+                crate::store::check_output(&out)
+            })
+        };
+        let snapshot = match &result {
+            Ok(check) => check.clone(),
+            Err(error) => crate::store::Check {
+                checked_at: now(),
+                error: Some(error.clone()),
+                ..Default::default()
+            },
+        };
+        self.catalog
+            .extra
+            .insert("storeCheck".into(), serde_json::to_value(snapshot).unwrap());
+        self.save()?;
+        result
+    }
+    pub fn execute_store(&mut self, preview: crate::store::Check) -> Result<()> {
+        if self.demo {
+            self.catalog.extra.insert(
+                "storeCheck".into(),
+                serde_json::to_value(crate::store::Check {
+                    checked_at: now(),
+                    ..Default::default()
+                })
+                .unwrap(),
+            );
+            self.catalog.receipts.push(json!({"name":"Microsoft Store updates","kind":"store update","status":"verified","startedAt":now(),"detail":"Simulated Store update; no installed software changed."}));
+            return Ok(());
+        }
+        self.execute_store_with(preview, Self::check_store, crate::inventory::read, || {
+            crate::store::run(true)
+        })
+    }
+    fn execute_store_with(
+        &mut self,
+        preview: crate::store::Check,
+        mut check: impl FnMut(&mut Self) -> Result<crate::store::Check>,
+        mut inventory: impl FnMut() -> Result<Vec<App>>,
+        mut apply: impl FnMut() -> Result<winget::Output>,
+    ) -> Result<()> {
+        self.cancel.store(false, Ordering::Relaxed);
+        if preview.error.is_some() || preview.updates.is_empty() {
+            return Err("Check Microsoft Store updates first.".into());
+        }
+        let current = check(self)?;
+        if current.error.is_some()
+            || !crate::store::same_updates(&preview.updates, &current.updates)
+        {
+            return Err(
+                "Store updates changed since preview. Review the refreshed list before applying."
+                    .into(),
+            );
+        }
+        let before = inventory()?;
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err("Store update cancelled before launch.".into());
+        }
+        let id = format!(
+            "store-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let file = format!("{id}.log");
+        let index = self.catalog.receipts.len();
+        self.catalog.receipts.push(json!({"id":id,"name":"Microsoft Store updates","kind":"store update","provider":"Microsoft Store","status":"running","startedAt":now(),"preview":preview.updates,"logFile":file}));
+        self.save()?; // Persist intention before handing the bulk operation to Microsoft.
+        let result = apply();
+        let log = match &result {
+            Ok(o) => format!(
+                "Command: store updates --apply\nExit: {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                o.code, o.stdout, o.stderr
+            ),
+            Err(e) => format!(
+                "Store command result unknown: {e}\nStore may still be processing updates. Do not automatically retry."
+            ),
+        };
+        let log_result = if self.demo {
+            Ok(())
+        } else {
+            fs::create_dir_all(self.directory.join("receipts"))
+                .and_then(|_| fs::write(self.directory.join("receipts").join(file), log))
+                .map_err(|e| e.to_string())
+        };
+        let after = inventory();
+        let (verified, review) = after
+            .as_ref()
+            .map(|a| crate::store::verification(&preview.updates, &before, a))
+            .unwrap_or((0, preview.updates.len()));
+        let succeeded = result
+            .as_ref()
+            .is_ok_and(|o| o.code == 0 && o.stderr.trim().is_empty());
+        let state = if succeeded && review == 0 {
+            "verified"
+        } else if result.as_ref().is_ok_and(|o| o.code != 0) {
+            "failed"
+        } else {
+            "unverified"
+        };
+        let detail = format!(
+            "Store operation finished: {verified} previewed apps have a verified newer installed version; {review} need review. Microsoft Store controls its batch, including dependencies. Review the output log for prompts or failures; no automatic retry."
+        );
+        let receipt = &mut self.catalog.receipts[index];
+        receipt["status"] = state.into();
+        receipt["detail"] = detail.clone().into();
+        receipt["finishedAt"] = now().into();
+        if let Ok(out) = &result {
+            receipt["exitCode"] = out.code.into();
+        }
+        if let Err(error) = &after {
+            receipt["inventoryError"] = error.clone().into();
+        }
+        if let Err(error) = &log_result {
+            receipt["logError"] = error.clone().into();
+        }
+        // Update current-user AppX observations without reclassifying any WinGet identity.
+        if let Ok(after) = after {
+            let mut observed: Vec<_> = self
+                .catalog
+                .apps
+                .values()
+                .filter(|a| a.present && a.kind != "appx")
+                .cloned()
+                .collect();
+            observed.extend(after.into_iter().filter(|a| a.kind == "appx").map(|mut a| {
+                a.uid = catalog::digest(&a.key)[..24].into();
+                a
+            }));
+            self.catalog.observe(observed);
+            crate::knowledge::enrich(&mut self.catalog);
+        }
+        self.catalog.extra.remove("storeCheck"); // Old availability is no longer actionable.
+        self.save()?;
+        log_result?;
+        if state == "verified" {
+            Ok(())
+        } else {
+            Err(detail)
+        }
+    }
     pub fn refresh_releases(&mut self, only: Option<&str>) {
         if self.demo {
             return;
@@ -835,6 +985,120 @@ pub fn demo_catalog() -> Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn store_changed_preview_never_starts_an_update() {
+        let mut service = Service::open(PathBuf::new(), true).unwrap();
+        let plan = crate::store::demo_check();
+        let error = service
+            .execute_store_with(
+                plan,
+                |_| Ok(crate::store::Check::default()),
+                || panic!("inventory unnecessary"),
+                || panic!("must not update"),
+            )
+            .unwrap_err();
+        assert!(error.contains("changed since preview"));
+        assert!(service.catalog.receipts.is_empty());
+    }
+    #[test]
+    fn store_failed_preflight_never_starts_an_update() {
+        let mut service = Service::open(PathBuf::new(), true).unwrap();
+        let plan = crate::store::demo_check();
+        assert!(
+            service
+                .execute_store_with(
+                    plan,
+                    |_| Err("Store unavailable".into()),
+                    || panic!("inventory unnecessary"),
+                    || panic!("must not update")
+                )
+                .is_err()
+        );
+        assert!(service.catalog.receipts.is_empty());
+    }
+    #[test]
+    fn store_success_exit_without_version_change_is_unverified() {
+        let mut service = Service::open(PathBuf::new(), true).unwrap();
+        let plan = crate::store::demo_check();
+        let current = plan.clone();
+        let mut calls = 0;
+        let result = service.execute_store_with(
+            plan,
+            |_| Ok(current.clone()),
+            || Ok(vec![]),
+            || {
+                calls += 1;
+                Ok(winget::Output {
+                    code: 0,
+                    stdout: "Synthetic CLI returned without updating".into(),
+                    stderr: String::new(),
+                })
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+        assert_eq!(
+            service.catalog.receipts.last().unwrap()["status"],
+            "unverified"
+        );
+        assert!(!service.catalog.extra.contains_key("storeCheck"));
+    }
+    #[test]
+    fn store_update_verifies_versions_and_keeps_existing_catalogue() {
+        let mut service = Service::open(PathBuf::new(), true).unwrap();
+        let original_count = service.catalog.apps.len();
+        let mut plan = crate::store::demo_check();
+        plan.updates.truncate(1);
+        let row = &plan.updates[0];
+        let old = App {
+            key: "appx:Orchid_signed".into(),
+            kind: "appx".into(),
+            name: row.name.clone(),
+            publisher: row.publisher.clone(),
+            version: row.version.clone(),
+            extra: [
+                ("signatureKind".into(), "Store".into()),
+                ("rawPublisher".into(), "CN=Orchid".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let current = plan.clone();
+        let mut scans = 0;
+        let mut installs = 0;
+        service
+            .execute_store_with(
+                plan,
+                |_| Ok(current.clone()),
+                || {
+                    scans += 1;
+                    Ok(vec![App {
+                        version: if scans == 1 {
+                            old.version.clone()
+                        } else {
+                            "2026.11.0.0".into()
+                        },
+                        ..old.clone()
+                    }])
+                },
+                || {
+                    installs += 1;
+                    Ok(winget::Output {
+                        code: 0,
+                        stdout: "Synthetic update".into(),
+                        stderr: String::new(),
+                    })
+                },
+            )
+            .unwrap();
+        assert_eq!(installs, 1);
+        assert_eq!(scans, 2);
+        assert_eq!(service.catalog.apps.len(), original_count + 1);
+        assert_eq!(
+            service.catalog.receipts.last().unwrap()["status"],
+            "verified"
+        );
+    }
     #[test]
     fn exclusive_catalogue_lock_is_released_on_close() {
         let dir = std::env::temp_dir().join(format!(

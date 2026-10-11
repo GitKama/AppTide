@@ -19,6 +19,8 @@ const TEAL: Color32 = Color32::from_rgb(7, 109, 114);
 const LINE: Color32 = Color32::from_rgb(220, 229, 237);
 enum Command {
     Scan,
+    CheckStore,
+    ApplyStore(crate::store::Check),
     Execute(Plan),
     Pause(String, bool),
     Import,
@@ -42,6 +44,7 @@ enum Event {
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Updates,
+    Store,
     Installed,
     Catalogue,
     Activity,
@@ -74,6 +77,9 @@ pub struct Tide {
     phase: String,
     error: Option<String>,
     plan: Option<Plan>,
+    store_plan: Option<crate::store::Check>,
+    store_apply_rect: Option<Rect>,
+    store_confirm_rect: Option<Rect>,
     demo: bool,
     directory: String,
     details_reset: bool,
@@ -143,6 +149,79 @@ pub fn style(ctx: &egui::Context) {
     }
 }
 impl Tide {
+    pub fn store_preview(&mut self) {
+        if self.demo {
+            self.page = Page::Store;
+            self.catalog.extra.insert(
+                "storeCheck".into(),
+                serde_json::to_value(crate::store::demo_check()).unwrap(),
+            );
+        }
+    }
+    fn store_page(&mut self, ui: &mut Ui) {
+        ui.label("Check and update apps through Microsoft's installed Store client.");
+        ui.label("Store updates run separately from the WinGet queue. Microsoft controls the batch and its dependencies.");
+        ui.add_space(10.0);
+        let check = self
+            .catalog
+            .extra
+            .get("storeCheck")
+            .and_then(|v| serde_json::from_value::<crate::store::Check>(v.clone()).ok());
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!self.busy, egui::Button::new("Check Store updates"))
+                .clicked()
+            {
+                self.send(Command::CheckStore, "Checking Microsoft Store updates…");
+            }
+            let button = ui.add_enabled(
+                !self.busy
+                    && check
+                        .as_ref()
+                        .is_some_and(|c| c.error.is_none() && !c.updates.is_empty()),
+                egui::Button::new(RichText::new("Update Store apps…").color(Color32::WHITE))
+                    .fill(TEAL),
+            );
+            self.store_apply_rect = Some(button.rect);
+            if button.clicked() {
+                self.store_plan = check.clone();
+            }
+            if ui.button("Open Store Downloads").clicked() {
+                open_store();
+            }
+        });
+        ui.add_space(12.0);
+        let Some(check) = check else {
+            ui.label("Check for available Store updates to see the list here.");
+            return;
+        };
+        if let Some(error) = &check.error {
+            ui.colored_label(Color32::from_rgb(150, 80, 10), error);
+            return;
+        }
+        ui.label(
+            RichText::new(format!(
+                "{} updates reported · Checked {}",
+                check.updates.len(),
+                check.checked_at
+            ))
+            .color(MUTED),
+        );
+        if check.updates.is_empty() {
+            ui.heading("No Store updates reported");
+            ui.label("Availability can change. You can also check in Store Downloads.");
+            return;
+        }
+        ui.label("Versions below are installed versions reported by Store. Target versions are chosen by Microsoft at update time.");
+        ui.add_space(10.0);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for app in &check.updates {
+                ui.label(RichText::new(&app.name).strong());
+                ui.label(format!("{} · Installed {}", app.publisher, app.version));
+                ui.separator();
+            }
+        });
+    }
     fn show_logs(&mut self) {
         if self.demo {
             self.log_viewer=Some(LogViewer { files:vec!["receipts/synthetic-example.log".into()],selected:0,text:"Synthetic download result\nHTTP 404: installer file not found\nThis app failed. Remaining independent updates continued.\nNo private file was read.".into() });
@@ -241,6 +320,8 @@ impl Tide {
             while let Ok(command) = commands.recv() {
                 let operation = match &command {
                     Command::Scan => "scan",
+                    Command::CheckStore => "Store check",
+                    Command::ApplyStore(_) => "Store updates",
                     Command::Execute(_) => "manual queue",
                     Command::Automatic => "automatic queue",
                     Command::CheckSelf => "self-update check",
@@ -251,8 +332,14 @@ impl Tide {
                 let result = match command {
                     Command::Scan => {
                         service.cancel.store(false, Ordering::Relaxed);
-                        service.scan().map(|_| ())
+                        service.scan().map(|_| {
+                            if let Err(error) = service.check_store() {
+                                service.warnings.push(error);
+                            }
+                        })
                     }
+                    Command::CheckStore => service.check_store().map(|_| ()),
+                    Command::ApplyStore(preview) => service.execute_store(preview),
                     Command::Execute(plan) => service.execute(plan, |phase, cat| {
                         let _ =
                             events.send(Event::State(Box::new(cat.clone()), vec![], phase.into()));
@@ -361,6 +448,9 @@ impl Tide {
             phase: String::new(),
             error: restart_error,
             plan: None,
+            store_plan: None,
+            store_apply_rect: None,
+            store_confirm_rect: None,
             demo,
             directory,
             details_reset: false,
@@ -432,6 +522,7 @@ impl Tide {
         let count = self.catalog.apps.values().filter(|a| eligible(a)).count();
         for (page, label) in [
             (Page::Updates, format!("Updates                 {count}")),
+            (Page::Store, "Microsoft Store".into()),
             (Page::Installed, "Installed apps".into()),
             (Page::Catalogue, "My catalogue".into()),
             (Page::Activity, "Activity".into()),
@@ -478,12 +569,29 @@ impl Tide {
         };
         ui.add(egui::Label::new(RichText::new(&a.name).size(21.0).strong()).truncate())
             .on_hover_text(&a.name);
-        ui.add(egui::Label::new(RichText::new(&a.publisher).color(MUTED)).truncate())
-            .on_hover_text(&a.publisher);
+        ui.add(
+            egui::Label::new(
+                RichText::new(if a.publisher.trim().is_empty() {
+                    "Vendor not reported"
+                } else {
+                    &a.publisher
+                })
+                .color(MUTED),
+            )
+            .truncate(),
+        )
+        .on_hover_text(&a.publisher);
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Installed").color(MUTED));
-            ui.label(RichText::new(&a.version).strong());
+            ui.label(
+                RichText::new(if a.version.trim().is_empty() {
+                    "Version not reported"
+                } else {
+                    &a.version
+                })
+                .strong(),
+            );
         });
         if !a.available.is_empty() {
             ui.horizontal(|ui| {
@@ -566,6 +674,12 @@ impl Tide {
             self.details_reset = false;
         }
         scroll.show(ui,|ui|{
+            if a.kind=="appx" && a.extra.get("signatureKind").and_then(|v|v.as_str())==Some("Store") && ui.button("Manage Microsoft Store updates").clicked(){self.page=Page::Store;}
+            if let Some(sources)=a.extra.get("metadataSources") {
+                field(ui,"Vendor source",sources["publisher"].as_str().unwrap_or("Not reported"));
+                field(ui,"Version source",sources["version"].as_str().unwrap_or("Not reported"));
+            }
+            if let Some(arch)=a.extra.get("architecture").and_then(|v|v.as_str()){field(ui,"Architecture",arch);}
             if ui.add_enabled(!self.busy,egui::Button::new("Edit my catalogue entry")).clicked(){
                 self.source_editor=Some(SourceEditor{id:Some(a.uid.clone()),manual:a.kind=="manual",name:a.name.clone(),source:crate::custom::get(&a).unwrap_or_else(||crate::custom::Source{manual_version:a.version.clone(),url:a.knowledge.as_ref().map(|k|k.source.clone()).unwrap_or_default(),repository:crate::releases::repository(&a).unwrap_or("").into(),..Default::default()}),error:None});
             }
@@ -738,7 +852,11 @@ impl Tide {
                 });
                 ui.label(r["detail"].as_str().unwrap_or(""));
                 if let Some(code) = r["exitCode"].as_i64() {
-                    ui.label(format!("WinGet exit code: {code} (0x{:08X})", code as u32));
+                    ui.label(format!(
+                        "{} exit code: {code} (0x{:08X})",
+                        r["provider"].as_str().unwrap_or("WinGet"),
+                        code as u32
+                    ));
                 }
                 if let Some(file) = r["logFile"].as_str() {
                     ui.label(format!("Output: receipts/{file}"));
@@ -822,6 +940,7 @@ impl Tide {
             ctx.request_repaint_after(Duration::from_secs(30));
             if !self.busy
                 && self.plan.is_none()
+                && self.store_plan.is_none()
                 && self.source_editor.is_none()
                 && crate::service::automatic_due(&self.catalog)
             {
@@ -849,10 +968,10 @@ impl Tide {
             rect.max - Vec2::new(28.0, 18.0),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(content),|ui|{
-            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
+            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Store=>"Microsoft Store",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if self.page==Page::Catalogue && ui.add_enabled(!self.busy,egui::Button::new("Add custom app")).clicked(){self.source_editor=Some(SourceEditor{id:None,manual:true,name:String::new(),source:Default::default(),error:None});}
                     if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();let button=ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(Color32::WHITE)).fill(TEAL));self.update_all_rect=Some(button.rect);if button.clicked(){self.prepare("update",ids);}}
-                    if ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
+                    if self.page!=Page::Store && ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
                 });
             });ui.add_space(18.0);
             if let Some(release)=self.own_release.clone(){ui.horizontal(|ui|{ui.colored_label(TEAL,format!("AppTide {} is ready",release.version));if ui.add_enabled(!self.busy,egui::Button::new("Update AppTide and restart")).clicked(){self.send(Command::InstallSelf(release),"Downloading and verifying AppTide...");}});}
@@ -866,10 +985,18 @@ impl Tide {
                 if self.page==Page::Activity && let Some(detail)=batch["detail"].as_str() && !detail.is_empty() {ui.label(detail);}
             }
             for warning in &self.warnings{ui.colored_label(Color32::from_rgb(137,80,14),RichText::new(warning).size(12.0));}
-            if self.busy {ui.horizontal(|ui|{ui.spinner();ui.label(&self.phase);if ui.button("Stop queue").clicked(){self.cancel.store(true,Ordering::Relaxed);}});}
+            if self.busy {ui.horizontal(|ui|{ui.spinner();ui.label(&self.phase);if !self.phase.starts_with("Microsoft Store is updating") && ui.button("Stop queue").clicked(){self.cancel.store(true,Ordering::Relaxed);}});}
             let learned=self.catalog.apps.values().filter(|a|a.present && a.winget_id.is_none() && a.knowledge.is_some()).count();let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
             ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} WinGet / {learned} other known routes  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(MUTED));});ui.separator();ui.add_space(10.0);
-            if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
+            if self.page==Page::Updates {
+                ui.horizontal_wrapped(|ui| {
+                    let count=self.catalog.extra.get("storeCheck").and_then(|v|v["updates"].as_array()).map(Vec::len);
+                    let failed=self.catalog.extra.get("storeCheck").is_some_and(|v|v["error"].is_string());
+                    ui.label(if failed {"Microsoft Store: check unavailable".into()}else{match count {Some(n)=>format!("Microsoft Store: {n} updates reported"),None=>"Microsoft Store: not checked".into()}});
+                    if ui.link("Manage Store updates").clicked(){self.page=Page::Store;}
+                }); ui.add_space(8.0);
+            }
+            if self.page==Page::Store {self.store_page(ui);}else if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
                 let body=ui.available_rect_before_wrap();let details_width=290.0;let split=body.right()-details_width-20.0;
                 let list=Rect::from_min_max(body.min,Pos2::new(split-20.0,body.bottom()));let detail=Rect::from_min_max(Pos2::new(split+20.0,body.top()+2.0),body.max);
                 ui.painter().line_segment([Pos2::new(split,body.top()),Pos2::new(split,body.bottom())],Stroke::new(1.0,LINE));
@@ -986,6 +1113,28 @@ impl Tide {
                 }
             } else if cancel {
                 self.source_editor = None;
+            }
+        }
+        if let Some(preview) = self.store_plan.clone() {
+            let mut confirm = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("store-preview")).show(&ctx,|ui| {
+                ui.set_width(520.0);ui.heading("Update Microsoft Store apps?");
+                ui.label(format!("{} updates were reported at the last check.",preview.updates.len()));
+                ui.label("AppTide rechecks this list first. Microsoft Store then updates its current pending set, which can include dependencies or newly available updates. AppTide pause settings do not apply to this batch.");
+                ui.label("Save your work in Store apps first. Once started, Store controls the operation; AppTide cannot cancel an in-progress Store batch.");
+                egui::ScrollArea::vertical().max_height(200.0).show(ui,|ui|{for a in &preview.updates{ui.label(format!("{} · {}",a.name,a.publisher));}});
+                ui.horizontal(|ui|{let button=ui.button("Confirm Store updates");self.store_confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});
+            });
+            if cancel {
+                self.store_plan = None;
+            }
+            if confirm {
+                self.store_plan = None;
+                self.send(
+                    Command::ApplyStore(preview),
+                    "Microsoft Store is updating apps; wait for verification…",
+                );
             }
         }
         if let Some(plan) = self.plan.clone() {
@@ -1169,6 +1318,14 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
     );
     response.on_hover_text(&a.name)
 }
+fn open_store() {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer.exe")
+            .arg("ms-windows-store://downloadsandupdates")
+            .spawn();
+    }
+}
 fn open_settings() {
     #[cfg(windows)]
     {
@@ -1203,6 +1360,72 @@ fn open_project() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn store_buttons_fit_and_confirmation_reaches_the_worker() {
+        for size in [Vec2::new(1440.0, 900.0), Vec2::new(1040.0, 650.0)] {
+            let ctx = egui::Context::default();
+            let mut app = Tide::new(Service::open(Default::default(), true).unwrap(), &ctx);
+            app.store_preview();
+            for _ in 0..3 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let rect = app.store_apply_rect.unwrap();
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+            for pressed in [true, false] {
+                let pos = rect.center();
+                frame(
+                    &mut app,
+                    &ctx,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+            }
+            assert!(app.store_plan.is_some());
+            assert!(app.catalog.receipts.is_empty());
+            assert!(!app.busy);
+            for _ in 0..3 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let rect = app.store_confirm_rect.unwrap();
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+            for pressed in [true, false] {
+                let pos = rect.center();
+                frame(
+                    &mut app,
+                    &ctx,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+            }
+            for _ in 0..100 {
+                frame(&mut app, &ctx, size, vec![]);
+                if !app.busy {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(app.store_plan.is_none());
+            assert!(app.error.is_none());
+            assert_eq!(app.catalog.receipts.len(), 1);
+            assert_eq!(app.catalog.receipts[0]["kind"], "store update");
+        }
+    }
     fn frame(app: &mut Tide, ctx: &egui::Context, size: Vec2, events: Vec<egui::Event>) {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),

@@ -149,8 +149,18 @@ impl Catalog {
                 let fresh = std::mem::take(&mut app.extra);
                 app.extra = old.extra.clone();
                 app.extra.extend(fresh);
-                if !old.publisher.is_empty()
-                    && old.publisher != app.publisher
+                let old_publisher = old
+                    .extra
+                    .get("rawPublisher")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&old.publisher);
+                let new_publisher = app
+                    .extra
+                    .get("rawPublisher")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&app.publisher);
+                if !old_publisher.is_empty()
+                    && old_publisher != new_publisher
                     && !app.publisher.is_empty()
                 {
                     app.auto_update = false;
@@ -254,6 +264,33 @@ pub fn classify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn friendly_publisher_does_not_change_package_identity() {
+        let mut c = Catalog::default();
+        let old = App {
+            uid: "store".into(),
+            key: "appx:example".into(),
+            publisher: "CN=Example Ltd, O=Example".into(),
+            kind: "appx".into(),
+            ..Default::default()
+        };
+        c.observe(vec![old.clone()]);
+        c.apps.get_mut("store").unwrap().extra.insert(
+            "customSource".into(),
+            serde_json::json!({"instructions":"My note"}),
+        );
+        let mut new = App {
+            publisher: "Example".into(),
+            ..old.clone()
+        };
+        new.extra
+            .insert("rawPublisher".into(), old.publisher.into());
+        c.observe(vec![new.clone()]);
+        assert!(c.apps["store"].extra.contains_key("customSource"));
+        new.extra.insert("rawPublisher".into(), "CN=Other".into());
+        c.observe(vec![new]);
+        assert!(!c.apps["store"].extra.contains_key("customSource"));
+    }
     #[test]
     fn atomic_save_retains_backup_and_recovers_interrupted_receipts() {
         let dir = std::env::temp_dir().join(format!(

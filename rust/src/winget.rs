@@ -217,10 +217,22 @@ pub fn queue_stop_code(code: i32) -> bool {
     )
 }
 pub fn run(program: &str, args: &[String], timeout: Option<Duration>) -> Result<Output> {
+    run_with_input(program, args, timeout, None)
+}
+pub fn run_with_input(
+    program: &str,
+    args: &[String],
+    timeout: Option<Duration>,
+    input: Option<Vec<u8>>,
+) -> Result<Output> {
     let mut command = Command::new(program);
     command
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
@@ -231,6 +243,13 @@ pub fn run(program: &str, args: &[String], timeout: Option<Duration>) -> Result<
     let mut child = command
         .spawn()
         .map_err(|e| format!("Could not start {program}: {e}"))?;
+    if let Some(input) = input {
+        let mut stdin = child.stdin.take().ok_or("Child input unavailable")?;
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&input);
+        });
+    }
     // Drain both pipes concurrently; retain at most 8 MiB each without blocking the child.
     fn drain(mut pipe: impl Read) -> String {
         let mut stored = Vec::new();
