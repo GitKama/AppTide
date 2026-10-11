@@ -1,5 +1,13 @@
 # Changes
 
+## 0.2.2-beta.1 - 11 October 2026
+
+- Fix silent queue termination: show a persistent summary with verified, skipped, uncertain and unattempted counts, plus the app and reason that stopped execution.
+- Recheck each reviewed item against the refreshed inventory; skip stale targets without blocking unrelated updates or silently selecting another version. Keep stopping on failed or uncertain installer outcomes.
+- Explain duplicate installed registrations with observed versions and WinGet exit codes. Preserve the distinction between installer success and verified installed state.
+- Save private queue plans and outcomes, including preflight failures, and add bounded application event logs. Activity opens the local diagnostic folder.
+- Add regression coverage for full Update all confirmation through the UI worker, partial batches, failed sources/installers, cancellation, duplicate registrations and log rotation.
+
 ## 0.2.1-beta.1 - 10 October 2026
 
 - Add a private catalogue editor for official sources, GitHub projects and update notes. Users can add, rename, version and stop tracking manual entries.

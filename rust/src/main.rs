@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod catalog;
 mod custom;
+mod diagnostics;
 mod inventory;
 mod knowledge;
 mod portable;
@@ -95,6 +96,9 @@ fn run() -> Result<(), String> {
             }
             if editor_preview {
                 app.editor_preview();
+            }
+            if demo && args.iter().any(|arg| arg == "--activity-preview") {
+                app.activity_preview();
             }
             Ok(Box::new(app))
         }),

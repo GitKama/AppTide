@@ -86,6 +86,8 @@ pub struct Tide {
     screenshot_requested: bool,
     pub scrolled_demo: bool,
     pub update_rect: Option<Rect>,
+    update_all_rect: Option<Rect>,
+    confirm_rect: Option<Rect>,
     pub uninstall_rect: Option<Rect>,
     pub list_rect: Option<Rect>,
 }
@@ -133,6 +135,16 @@ pub fn style(ctx: &egui::Context) {
     }
 }
 impl Tide {
+    pub fn activity_preview(&mut self) {
+        if self.demo {
+            self.page = Page::Activity;
+            self.catalog.extra.insert("lastBatch".into(), serde_json::json!({"status":"attention", "summary":"Queue needs attention: 2 verified, 1 skipped, 1 need review, 2 not run.", "detail":"Stopped at Example helper: multiple installed registrations match this package. Review the remaining updates after checking this app."}));
+            self.catalog.receipts = vec![
+                serde_json::json!({"name":"Aster Notes","kind":"update","status":"verified","startedAt":"Synthetic demonstration","detail":"Confirmed by a fresh inventory.","exitCode":0}),
+                serde_json::json!({"name":"Example helper","kind":"update","status":"unverified","startedAt":"Synthetic demonstration","detail":"Multiple installed registrations match this package (1.0, 2.0). Review these installations before retrying; no automatic retry will run.","exitCode":0,"logFile":"synthetic-example.log"}),
+            ];
+        }
+    }
     pub fn editor_preview(&mut self) {
         if self.demo {
             self.page = Page::Catalogue;
@@ -180,7 +192,17 @@ impl Tide {
         }
         std::thread::spawn(move || {
             let mut service = service;
+            service.diagnostic("startup", "Application worker ready");
             while let Ok(command) = commands.recv() {
+                let operation = match &command {
+                    Command::Scan => "scan",
+                    Command::Execute(_) => "manual queue",
+                    Command::Automatic => "automatic queue",
+                    Command::CheckSelf => "self-update check",
+                    Command::InstallSelf(_) => "self-update installation",
+                    _ => "catalogue or settings action",
+                };
+                service.diagnostic("started", operation);
                 let result = match command {
                     Command::Scan => {
                         service.cancel.store(false, Ordering::Relaxed);
@@ -247,6 +269,17 @@ impl Tide {
                         context.request_repaint();
                     }),
                 };
+                service.diagnostic(
+                    if result.is_ok() { "finished" } else { "error" },
+                    &format!(
+                        "{operation}: {}",
+                        result
+                            .as_ref()
+                            .err()
+                            .map(String::as_str)
+                            .unwrap_or("completed")
+                    ),
+                );
                 let _ = events.send(Event::State(
                     Box::new(service.catalog.clone()),
                     service.warnings.clone(),
@@ -301,6 +334,8 @@ impl Tide {
             screenshot_requested: false,
             scrolled_demo: false,
             update_rect: None,
+            update_all_rect: None,
+            confirm_rect: None,
             uninstall_rect: None,
             list_rect: None,
         }
@@ -628,6 +663,13 @@ impl Tide {
         self.list_rect = Some(output.inner_rect);
     }
     fn activity(&mut self, ui: &mut Ui) {
+        if ui
+            .add_enabled(!self.demo, egui::Button::new("Open local logs"))
+            .clicked()
+        {
+            open_data_folder(&self.directory);
+        }
+        ui.label("Logs contain app events; receipts contain WinGet output; batches contain queue plans and stop reasons. Keep these files private.");
         if self.catalog.receipts.is_empty() {
             ui.add_space(30.0);
             ui.heading("A history you can check.");
@@ -649,6 +691,12 @@ impl Tide {
                     ui.label(r["startedAt"].as_str().unwrap_or(""));
                 });
                 ui.label(r["detail"].as_str().unwrap_or(""));
+                if let Some(code) = r["exitCode"].as_i64() {
+                    ui.label(format!("WinGet exit code: {code} (0x{:08X})", code as u32));
+                }
+                if let Some(file) = r["logFile"].as_str() {
+                    ui.label(format!("Output: receipts/{file}"));
+                }
                 ui.separator();
             }
         });
@@ -749,13 +797,20 @@ impl Tide {
         ui.scope_builder(egui::UiBuilder::new().max_rect(content),|ui|{
             ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if self.page==Page::Catalogue && ui.add_enabled(!self.busy,egui::Button::new("Add custom app")).clicked(){self.source_editor=Some(SourceEditor{id:None,manual:true,name:String::new(),source:Default::default(),error:None});}
-                    if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();if ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(Color32::WHITE)).fill(TEAL)).clicked(){self.prepare("update",ids);}}
+                    if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();let button=ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(Color32::WHITE)).fill(TEAL));self.update_all_rect=Some(button.rect);if button.clicked(){self.prepare("update",ids);}}
                     if ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
                 });
             });ui.add_space(18.0);
             if let Some(release)=self.own_release.clone(){ui.horizontal(|ui|{ui.colored_label(TEAL,format!("AppTide {} is ready",release.version));if ui.add_enabled(!self.busy,egui::Button::new("Update AppTide and restart")).clicked(){self.send(Command::InstallSelf(release),"Downloading and verifying AppTide...");}});}
             if self.demo{ui.colored_label(TEAL,"DEMO  ·  Synthetic apps. Update and uninstall actions are simulated.");}
             if let Some(error)=&self.error{ui.colored_label(Color32::from_rgb(161,43,42),error);}
+            if !self.busy && let Some(batch)=self.catalog.extra.get("lastBatch") {
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(if batch["status"]=="complete" {TEAL} else {Color32::from_rgb(137,80,14)}, batch["summary"].as_str().unwrap_or("Previous queue needs review."));
+                    if ui.link("View Activity").clicked() { self.page=Page::Activity; }
+                });
+                if self.page==Page::Activity && let Some(detail)=batch["detail"].as_str() && !detail.is_empty() {ui.label(detail);}
+            }
             for warning in &self.warnings{ui.colored_label(Color32::from_rgb(137,80,14),RichText::new(warning).size(12.0));}
             if self.busy {ui.horizontal(|ui|{ui.spinner();ui.label(&self.phase);if ui.button("Stop queue").clicked(){self.cancel.store(true,Ordering::Relaxed);}});}
             let learned=self.catalog.apps.values().filter(|a|a.present && a.winget_id.is_none() && a.knowledge.is_some()).count();let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
@@ -822,7 +877,7 @@ impl Tide {
         if let Some(plan) = self.plan.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide will check the installed versions again before running WinGet. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));ui.separator();}});ui.horizontal(|ui|{confirm=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"}).clicked();cancel=ui.button("Cancel").clicked();});});
+            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide will check the installed versions again before running WinGet. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
             if cancel {
                 self.plan = None;
             }
@@ -1008,6 +1063,17 @@ fn open_settings() {
         let _ = c.spawn();
     }
 }
+fn open_data_folder(directory: &str) {
+    #[cfg(windows)]
+    {
+        // The catalogue directory is chosen locally; no log contents become shell commands.
+        let _ = std::process::Command::new("explorer.exe")
+            .arg(directory)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    let _ = directory;
+}
 fn open_url(url: &str) {
     if !url.starts_with("https://")
         || url
@@ -1062,6 +1128,67 @@ mod tests {
             assert!(viewport.contains_rect(app.update_rect.unwrap()));
             assert!(viewport.contains_rect(app.uninstall_rect.unwrap()));
         }
+    }
+    #[test]
+    fn update_all_confirmation_runs_three_apps_and_keeps_summary() {
+        let ctx = egui::Context::default();
+        let mut app = Tide::new(Service::open(Default::default(), true).unwrap(), &ctx);
+        let size = Vec2::new(1040.0, 650.0);
+        for confirm in [false, true] {
+            for _ in 0..3 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let rect = if confirm {
+                app.confirm_rect
+            } else {
+                app.update_all_rect
+            }
+            .unwrap();
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+            let pos = rect.center();
+            for pressed in [true, false] {
+                frame(
+                    &mut app,
+                    &ctx,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+            }
+            if !confirm {
+                assert_eq!(app.plan.as_ref().unwrap().apps.len(), 3);
+            }
+        }
+        for _ in 0..100 {
+            frame(&mut app, &ctx, size, vec![]);
+            if !app.busy {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app.busy);
+        assert!(app.error.is_none());
+        assert_eq!(app.catalog.receipts.len(), 3);
+        assert!(
+            app.catalog
+                .receipts
+                .iter()
+                .all(|r| r["status"] == "verified")
+        );
+        assert_eq!(app.catalog.extra["lastBatch"]["status"], "complete");
+        assert!(
+            app.catalog.extra["lastBatch"]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("3 verified")
+        );
     }
     #[test]
     fn clicking_update_opens_preview_without_executing() {

@@ -1,6 +1,6 @@
 [package]
 name = "apptide-beta"
-version = "0.2.1-beta.1"
+version = "0.2.2-beta.1"
 edition = "2024"
 license = "MIT"
 description = "AppTide native Windows software manager"

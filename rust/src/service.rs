@@ -74,6 +74,14 @@ impl Service {
             self.catalog.save(&self.directory)
         }
     }
+    pub fn diagnostic(&mut self, event: &str, detail: &str) {
+        if !self.demo
+            && let Err(e) = crate::diagnostics::record(&self.directory, event, detail)
+        {
+            self.warnings
+                .push(format!("Application log could not be written: {e}"));
+        }
+    }
     pub fn scan(&mut self) -> Result<bool> {
         if self.demo {
             self.catalog.scans += 1;
@@ -397,7 +405,114 @@ impl Service {
         self.catalog = imported;
         self.save()
     }
-    pub fn execute(&mut self, plan: Plan, mut status: impl FnMut(&str, &Catalog)) -> Result<()> {
+    pub fn execute(&mut self, plan: Plan, status: impl FnMut(&str, &Catalog)) -> Result<()> {
+        self.execute_with(plan, status, Self::scan, |service, kind, before| {
+            if service.demo {
+                let a = service.catalog.apps.get_mut(&before.uid).unwrap();
+                if kind == "update" {
+                    a.version = a.available.clone();
+                    a.available.clear();
+                } else {
+                    a.present = false;
+                }
+                return Ok(winget::Output {
+                    code: 0,
+                    stdout: "Simulated operation".into(),
+                    stderr: String::new(),
+                });
+            }
+            winget::run("winget.exe", &winget::args(kind, before)?, None)
+        })
+    }
+    fn save_batch(&mut self, batch: &Value) -> Result<()> {
+        self.catalog.extra.insert("lastBatch".into(), batch.clone());
+        self.save()?;
+        if !self.demo {
+            let folder = self.directory.join("batches");
+            fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+            fs::write(
+                folder.join(format!("{}.json", batch["id"].as_str().unwrap())),
+                serde_json::to_vec_pretty(batch).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| format!("Could not save batch diagnostics: {e}"))?;
+        }
+        Ok(())
+    }
+    // Injection is limited to tests; production always uses the same scan and WinGet runner.
+    fn execute_with(
+        &mut self,
+        plan: Plan,
+        mut status: impl FnMut(&str, &Catalog),
+        mut scan: impl FnMut(&mut Self) -> Result<bool>,
+        mut install: impl FnMut(&mut Self, &str, &App) -> Result<winget::Output>,
+    ) -> Result<()> {
+        let batch_id = format!(
+            "{}-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+            std::process::id()
+        );
+        let mut batch = json!({"id":batch_id,"kind":plan.kind,"startedAt":now(),"status":"running",
+            "requested":plan.apps.len(),"items":plan.apps.iter().map(|a| json!({"packageId":a.winget_id,"name":a.name,"before":a.version,"target":a.available})).collect::<Vec<_>>()});
+        self.save_batch(&batch)?;
+        let result = self.execute_inner(&plan, &batch_id, &mut status, &mut scan, &mut install);
+        let receipts: Vec<_> = self
+            .catalog
+            .receipts
+            .iter()
+            .filter(|r| r["batchId"] == batch_id)
+            .cloned()
+            .collect();
+        let verified = receipts
+            .iter()
+            .filter(|r| r["status"] == "verified")
+            .count();
+        let skipped = receipts.iter().filter(|r| r["status"] == "skipped").count();
+        let attention = receipts.len() - verified - skipped;
+        let not_run = plan.apps.len().saturating_sub(receipts.len());
+        let cancelled = self.cancel.load(Ordering::Relaxed);
+        let summary = format!(
+            "{}: {verified} verified, {skipped} skipped, {attention} need review, {not_run} not run.",
+            if cancelled {
+                "Queue stopped"
+            } else if result.is_err() {
+                "Queue needs attention"
+            } else if skipped > 0 {
+                "Queue finished with skips"
+            } else {
+                "Queue complete"
+            }
+        );
+        batch["status"] = if cancelled {
+            "cancelled"
+        } else if result.is_err() || attention > 0 {
+            "attention"
+        } else if skipped > 0 {
+            "partial"
+        } else {
+            "complete"
+        }
+        .into();
+        batch["summary"] = summary.clone().into();
+        batch["detail"] = result.as_ref().err().cloned().unwrap_or_default().into();
+        batch["finishedAt"] = now().into();
+        batch["receipts"] = receipts.into();
+        if self.catalog.receipts.len() > 1000 {
+            self.catalog
+                .receipts
+                .drain(..self.catalog.receipts.len() - 1000);
+        }
+        self.save_batch(&batch)?;
+        status(&summary, &self.catalog);
+        result.map_err(|e| format!("{summary} {e} Open Activity for details and local logs."))
+    }
+    fn execute_inner(
+        &mut self,
+        plan: &Plan,
+        batch_id: &str,
+        status: &mut impl FnMut(&str, &Catalog),
+        scan: &mut impl FnMut(&mut Self) -> Result<bool>,
+        install: &mut impl FnMut(&mut Self, &str, &App) -> Result<winget::Output>,
+    ) -> Result<()> {
         if plan.created.elapsed().as_secs() > 600 {
             return Err("Preview expired. Review the operation again.".into());
         }
@@ -406,21 +521,34 @@ impl Service {
             "Checking installed versions before proceeding…",
             &self.catalog,
         );
-        if !self.scan()? {
-            return Err("WinGet preflight failed. No software changed.".into());
+        if !scan(self)? {
+            return Err(format!(
+                "WinGet preflight failed. No software changed. {}",
+                self.warnings.join(" ")
+            ));
         }
-        validate_plan(&plan, &self.catalog)?;
-        for before in &plan.apps {
+        for (index, before) in plan.apps.iter().enumerate() {
             if self.cancel.load(Ordering::Relaxed) {
                 break;
             }
             let receipt_id = format!("{}-{}", chrono::Utc::now().timestamp_millis(), before.uid);
-            let mut receipt = json!({"id":receipt_id,"kind":plan.kind,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"status":"running"});
+            let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"status":"running"});
+            // Never silently change the reviewed target. Skip stale items without blocking unrelated apps.
+            if let Err(reason) = validate_app(&plan.kind, before, &self.catalog) {
+                receipt["status"] = "skipped".into();
+                receipt["detail"] = reason.into();
+                receipt["finishedAt"] = now().into();
+                self.catalog.receipts.push(receipt);
+                self.save()?;
+                continue;
+            }
             self.catalog.receipts.push(receipt.clone());
             self.save()?;
             status(
                 &format!(
-                    "{} {}",
+                    "({}/{}) {} {}",
+                    index + 1,
+                    plan.apps.len(),
                     if plan.kind == "update" {
                         "Updating"
                     } else {
@@ -431,27 +559,26 @@ impl Service {
                 &self.catalog,
             );
             let result = (|| -> Result<(i32, bool)> {
-                if self.demo {
-                    std::thread::sleep(std::time::Duration::from_millis(450));
-                    let a = self.catalog.apps.get_mut(&before.uid).unwrap();
-                    if plan.kind == "update" {
-                        a.version = a.available.clone();
-                        a.available.clear();
-                    } else {
-                        a.present = false;
-                    }
-                    return Ok((0, true));
-                }
-                let out = winget::run("winget.exe", &winget::args(&plan.kind, before)?, None)?;
-                let receipts = self.directory.join("receipts");
-                fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
-                fs::write(
+                let args = winget::args(&plan.kind, before)?;
+                receipt["command"] = json!(args);
+                let out = install(self, &plan.kind, before)?;
+                receipt["exitCode"] = out.code.into();
+                if !self.demo {
+                    let receipts = self.directory.join("receipts");
+                    fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
+                    fs::write(
                     receipts.join(format!("{receipt_id}.log")),
-                    format!("{}\n{}", out.stdout, out.stderr),
+                    format!("AppTide {}\nBatch: {batch_id}\nCommand: winget.exe {}\nExit code: {} (0x{:08X})\n--- stdout ---\n{}\n--- stderr ---\n{}", env!("CARGO_PKG_VERSION"), args.join(" "), out.code, out.code as u32, out.stdout, out.stderr),
                 )
                 .map_err(|e| e.to_string())?;
+                    receipt["logFile"] = format!("{receipt_id}.log").into();
+                }
                 status("Verifying the installed software…", &self.catalog);
-                Ok((out.code, self.scan().unwrap_or(false)))
+                let complete = scan(self)?;
+                if !complete {
+                    receipt["scanWarnings"] = json!(self.warnings);
+                }
+                Ok((out.code, complete))
             })();
             match result {
                 Ok((code, complete)) => {
@@ -476,10 +603,20 @@ impl Service {
                     receipt["status"] = state.into();
                     receipt["exitCode"] = code.into();
                     receipt["after"] = after.map(|a| json!(a.version)).unwrap_or(Value::Null);
+                    receipt["observedVersions"] = json!(
+                        matches
+                            .iter()
+                            .map(|a| a.version.as_str())
+                            .collect::<Vec<_>>()
+                    );
                     receipt["detail"] = if state == "verified" {
-                        "Confirmed by a fresh inventory."
+                        "Confirmed by a fresh inventory.".to_string()
+                    } else if !complete {
+                        format!("Verification scan incomplete. {}", self.warnings.join(" "))
+                    } else if matches.len() > 1 || after.is_some_and(|a| a.ambiguous) {
+                        format!("Multiple installed registrations match this package ({}). WinGet exit code: {code}. Review these installations before retrying; no automatic retry will run.", matches.iter().map(|a| a.version.as_str()).collect::<Vec<_>>().join(", "))
                     } else {
-                        "Requested state not confirmed. Review the local receipt before retrying."
+                        format!("Requested state not confirmed. WinGet exit code: {code} (0x{:08X}). Review the local output log before retrying.", code as u32)
                     }
                     .into();
                 }
@@ -490,6 +627,7 @@ impl Service {
             }
             receipt["finishedAt"] = now().into();
             let verified = receipt["status"] == "verified";
+            let reason = receipt["detail"].as_str().unwrap_or_default().to_string();
             if let Some(r) = self
                 .catalog
                 .receipts
@@ -507,7 +645,7 @@ impl Service {
             self.save()?;
             status("Operation recorded", &self.catalog);
             if !verified {
-                break;
+                return Err(format!("Stopped at {}: {reason}", before.name));
             }
         }
         Ok(())
@@ -560,32 +698,44 @@ pub fn automatic_candidates(c: &Catalog) -> Vec<String> {
                 && c.receipts
                     .iter()
                     .rev()
-                    .find(|r| r["packageId"].as_str() == a.winget_id.as_deref())
+                    .find(|r| {
+                        r["packageId"].as_str() == a.winget_id.as_deref()
+                            && r["status"] != "skipped"
+                    })
                     .is_none_or(|r| r["status"] == "verified")
         })
         .take(100)
         .map(|a| a.uid.clone())
         .collect()
 }
-pub fn validate_plan(plan: &Plan, catalog: &Catalog) -> Result<()> {
-    for before in &plan.apps {
-        let matches: Vec<_> = catalog
-            .apps
-            .values()
-            .filter(|a| a.present && a.winget_id == before.winget_id)
-            .collect();
-        if matches.len() != 1 {
-            return Err("Package identity changed; review a fresh preview.".into());
-        }
-        let a = matches[0];
-        if !actionable(a)
-            || a.version != before.version
-            || (plan.kind == "update" && (!eligible(a) || a.available != before.available))
-        {
-            return Err(
-                "Installed software or update target changed; review a fresh preview.".into(),
-            );
-        }
+fn validate_app(kind: &str, before: &App, catalog: &Catalog) -> Result<()> {
+    let matches: Vec<_> = catalog
+        .apps
+        .values()
+        .filter(|a| a.present && a.winget_id == before.winget_id)
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "{}: expected one installation, found {}. No installer started; refresh and review this app.",
+            before.name,
+            matches.len()
+        ));
+    }
+    let a = matches[0];
+    if !actionable(a)
+        || a.version != before.version
+        || (kind == "update" && (!eligible(a) || a.available != before.available))
+    {
+        return Err(format!(
+            "{} changed since preview (installed: {}; available: {}). It may already be updated, paused or protected. No installer started; refresh and review this app.",
+            before.name,
+            a.version,
+            if a.available.is_empty() {
+                "none"
+            } else {
+                &a.available
+            }
+        ));
     }
     Ok(())
 }
@@ -693,7 +843,7 @@ mod tests {
             .clone();
         let p = prepare(&s.catalog, "update", std::slice::from_ref(&id)).unwrap();
         s.catalog.apps.get_mut(&id).unwrap().available = "9.0".into();
-        assert!(validate_plan(&p, &s.catalog).is_err());
+        assert!(validate_app(&p.kind, &p.apps[0], &s.catalog).is_err());
     }
     #[test]
     fn demo_executes_and_verifies_without_processes() {
@@ -712,6 +862,196 @@ mod tests {
         let p = prepare(&s.catalog, "uninstall", &[id]).unwrap();
         s.execute(p, |_, _| {}).unwrap();
         assert_eq!(s.catalog.receipts[1]["status"], "verified");
+        assert_ne!(
+            s.catalog.receipts[0]["batchId"],
+            s.catalog.receipts[1]["batchId"]
+        );
+    }
+    fn batch_fixture() -> (Service, Plan) {
+        let s = Service::open(PathBuf::new(), true).unwrap();
+        let ids = s
+            .catalog
+            .apps
+            .values()
+            .filter(|a| eligible(a))
+            .map(|a| a.uid.clone())
+            .collect::<Vec<_>>();
+        let plan = prepare(&s.catalog, "update", &ids).unwrap();
+        assert_eq!(plan.apps.len(), 3);
+        (s, plan)
+    }
+    fn simulated_update(s: &mut Service, _: &str, before: &App) -> Result<winget::Output> {
+        let a = s.catalog.apps.get_mut(&before.uid).unwrap();
+        a.version = before.available.clone();
+        a.available.clear();
+        Ok(winget::Output {
+            code: 0,
+            stdout: "Synthetic installer completed".into(),
+            stderr: String::new(),
+        })
+    }
+    #[test]
+    fn batch_skips_stale_target_and_updates_unaffected_apps() {
+        let (mut s, p) = batch_fixture();
+        let changed = p.apps[1].uid.clone();
+        s.catalog.apps.get_mut(&changed).unwrap().available = "99.0".into();
+        let mut invoked = vec![];
+        s.execute_with(
+            p,
+            |_, _| {},
+            |_| Ok(true),
+            |s, kind, a| {
+                invoked.push(a.uid.clone());
+                simulated_update(s, kind, a)
+            },
+        )
+        .unwrap();
+        assert_eq!(invoked.len(), 2);
+        assert!(!invoked.contains(&changed));
+        assert_eq!(s.catalog.apps[&changed].available, "99.0");
+        assert_eq!(s.catalog.receipts[1]["status"], "skipped");
+        assert_eq!(s.catalog.extra["lastBatch"]["status"], "partial");
+        assert!(
+            s.catalog.extra["lastBatch"]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("2 verified, 1 skipped")
+        );
+    }
+    #[test]
+    fn earlier_installer_changes_later_app_so_it_is_rechecked() {
+        let (mut s, p) = batch_fixture();
+        let changed = p.apps[1].uid.clone();
+        let mut count = 0;
+        s.execute_with(
+            p,
+            |_, _| {},
+            |_| Ok(true),
+            |s, kind, a| {
+                count += 1;
+                let result = simulated_update(s, kind, a);
+                s.catalog.apps.get_mut(&changed).unwrap().version = "99.0".into();
+                result
+            },
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(s.catalog.receipts[1]["status"], "skipped");
+    }
+    #[test]
+    fn duplicate_registrations_stop_with_versions_and_remaining_count() {
+        let (mut s, p) = batch_fixture();
+        let mut count = 0;
+        let error = s
+            .execute_with(
+                p,
+                |_, _| {},
+                |_| Ok(true),
+                |s, kind, a| {
+                    count += 1;
+                    let result = simulated_update(s, kind, a);
+                    let mut duplicate = a.clone();
+                    duplicate.uid = "second-registration".into();
+                    duplicate.ambiguous = true;
+                    s.catalog.apps.get_mut(&a.uid).unwrap().ambiguous = true;
+                    s.catalog.apps.insert(duplicate.uid.clone(), duplicate);
+                    result
+                },
+            )
+            .unwrap_err();
+        assert_eq!(count, 1);
+        assert!(error.contains("2 not run"));
+        assert!(error.contains("Multiple installed registrations"));
+        assert_eq!(s.catalog.receipts[0]["status"], "unverified");
+        assert_eq!(
+            s.catalog.receipts[0]["observedVersions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(s.catalog.extra["lastBatch"]["status"], "attention");
+    }
+    #[test]
+    fn failed_preflight_is_persisted_without_starting_an_installer() {
+        let (mut s, p) = batch_fixture();
+        let directory = std::env::temp_dir().join(format!(
+            "apptide-batch-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        s.directory = directory.clone();
+        s.demo = false;
+        let error = s
+            .execute_with(
+                p,
+                |_, _| {},
+                |_| Err("Synthetic source unavailable".into()),
+                |_, _, _| panic!("Installer must not start"),
+            )
+            .unwrap_err();
+        assert!(error.contains("3 not run"));
+        assert!(s.catalog.receipts.is_empty());
+        let persisted = Catalog::load(&directory.join("catalog.json")).unwrap();
+        assert_eq!(
+            persisted.extra["lastBatch"]["detail"],
+            "Synthetic source unavailable"
+        );
+        let file = directory.join("batches").join(format!(
+            "{}.json",
+            persisted.extra["lastBatch"]["id"].as_str().unwrap()
+        ));
+        let disk: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        assert_eq!(disk["status"], "attention");
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(directory.join("batches")).unwrap();
+        fs::remove_file(directory.join("catalog.json")).unwrap();
+        fs::remove_file(directory.join("catalog.json.bak")).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn cancelled_batch_explains_what_did_not_run() {
+        let (mut s, p) = batch_fixture();
+        let cancel = s.cancel.clone();
+        s.execute_with(
+            p,
+            |_, _| {
+                cancel.store(true, Ordering::Relaxed);
+            },
+            |_| Ok(true),
+            |_, _, _| panic!("Cancelled"),
+        )
+        .unwrap();
+        assert!(s.catalog.receipts.is_empty());
+        assert_eq!(s.catalog.extra["lastBatch"]["status"], "cancelled");
+        assert!(
+            s.catalog.extra["lastBatch"]["summary"]
+                .as_str()
+                .unwrap()
+                .contains("3 not run")
+        );
+    }
+    #[test]
+    fn failed_installer_stops_and_preserves_exit_code() {
+        let (mut s, p) = batch_fixture();
+        let error = s
+            .execute_with(
+                p,
+                |_, _| {},
+                |_| Ok(true),
+                |_, _, _| {
+                    Ok(winget::Output {
+                        code: 1603,
+                        stdout: String::new(),
+                        stderr: "Synthetic failure".into(),
+                    })
+                },
+            )
+            .unwrap_err();
+        assert!(error.contains("1603"));
+        assert_eq!(s.catalog.receipts.len(), 1);
+        assert_eq!(s.catalog.receipts[0]["status"], "failed");
+        assert_eq!(s.catalog.receipts[0]["exitCode"], 1603);
     }
     #[test]
     fn corrupt_catalogue_is_not_reset() {
@@ -754,7 +1094,14 @@ mod tests {
         assert!(automatic_candidates(&s.catalog).is_empty());
         s.catalog
             .receipts
+            .push(json!({"packageId":package,"status":"skipped"}));
+        assert!(automatic_candidates(&s.catalog).is_empty());
+        s.catalog
+            .receipts
             .push(json!({"packageId":package,"status":"verified"}));
+        s.catalog
+            .receipts
+            .push(json!({"packageId":package,"status":"skipped"}));
         assert_eq!(automatic_candidates(&s.catalog), vec![id.clone()]);
         s.catalog.apps.get_mut(&id).unwrap().excluded = true;
         assert!(automatic_candidates(&s.catalog).is_empty());

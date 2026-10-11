@@ -96,6 +96,13 @@ impl Catalog {
                     "AppTide stopped before verification. Review before retrying.".into();
             }
         }
+        if let Some(batch) = cat.extra.get_mut("lastBatch")
+            && batch["status"] == "running"
+        {
+            batch["status"] = "interrupted".into();
+            batch["summary"] =
+                "Previous queue was interrupted. Review Activity before retrying.".into();
+        }
         Ok(cat)
     }
     pub fn save(&self, directory: &Path) -> Result<()> {

@@ -7,6 +7,7 @@ AppTide retains public commits, annotated release notes, tags and downloadable a
 - `0.2.0-beta.1`: first native Rust beta.
 - `0.2.0-beta.2`: reviewed software catalogue and broader discovery.
 - `0.2.1-beta.1`: private catalogue editor and AppTide self-updates.
+- `0.2.2-beta.1`: queue recovery, explicit stop reasons and local diagnostics.
 - Subsequent small changes increment the patch version, with a beta suffix until stability criteria are met. Additional candidates of the same milestone increment the beta number. A final stable version removes the prerelease suffix.
 
 ## Release checklist

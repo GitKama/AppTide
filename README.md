@@ -4,9 +4,9 @@
 
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.1-beta.1/AppTide-0.2.1-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.1-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.2-beta.1/AppTide-0.2.2-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.2-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-Current release: **0.2.1-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
+Current release: **0.2.2-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
 
 ![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
@@ -64,6 +64,10 @@ This “learning” uses structured records and reproducible rules. It requires 
 AppTide has no telemetry and does not upload your inventory. WinGet and public GitHub checks contact their respective services. Public screenshots and test fixtures use synthetic software data.
 
 Coming from the Electron alpha? Before the beta's first scan, **Settings → Import alpha catalogue** can copy supported data from `%LOCALAPPDATA%\AppTide` while preserving the original. Automatic-update consent is reset. See [data and migration](rust/README.md#data-and-migration).
+
+## Troubleshooting updates
+
+After a queue finishes or stops, AppTide shows how many apps were verified, skipped, need review or were not run. Open **Activity → Open local logs** for private application events, WinGet output and batch diagnostics. Apps whose versions or permissions changed after the preview are skipped; failures and uncertain installations still stop the queue for review. See [logs and queue troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Beta boundaries
 

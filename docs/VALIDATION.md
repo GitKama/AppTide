@@ -1,5 +1,17 @@
 # AppTide validation
 
+## Rust 0.2.2-beta.1
+
+Validated locally on Windows x64 on 11 October 2026.
+
+- 40 Rust tests passed; the separate opt-in network download test remains ignored by default. Formatting, Clippy with warnings denied, and optimized release compilation passed.
+- An actual egui pointer sequence at compact size clicked Update all, confirmed the three-app preview, ran the simulated operations through the worker and retained the completed summary.
+- Queue regression checks cover a changed target, a later app changed by an earlier operation, duplicate installed registrations after successful execution, source/preflight failure persisted to disk, installer failure and cancellation. Skipped receipts do not clear a previous automatic retry block.
+- Application diagnostic JSON-line output and bounded rotation were checked. Public fixtures contain synthetic metadata only.
+- Native Activity captures at 1440x900 and 1040x700 were inspected: summary, reason, log access and receipt details remain readable, with lower history scrolling independently.
+- The packaged-code release executable completed a read-only live scan against a copy of the private catalogue. Real diagnostic files were reviewed locally; none were published. No third-party installation, removal, registry cleanup or forced retry was performed during this fix.
+- Historical receipts lacked batch IDs, so they cannot prove the precise membership of a past queue. Duplicate registrations still produce an uncertain result rather than a fabricated success. See [troubleshooting and RCA](TROUBLESHOOTING.md).
+
 ## Rust 0.2.1-beta.1
 
 - 32 default Rust tests passed; one additional network test passed when explicitly enabled. Default CI skips external download testing. Formatting, Clippy and release compilation passed locally.
