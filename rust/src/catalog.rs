@@ -165,6 +165,8 @@ impl Catalog {
                 {
                     app.auto_update = false;
                     app.extra.remove("automaticConsent");
+                    app.extra.remove("githubAutomaticConsent");
+                    app.extra.remove("githubAssetId");
                     app.extra.remove("watch");
                     app.extra.remove("customSource");
                     app.extra.insert(
@@ -236,7 +238,8 @@ pub fn actionable(a: &App) -> bool {
         && !a.ambiguous
 }
 pub fn eligible(a: &App) -> bool {
-    actionable(a) && !a.excluded && known_version(&a.version) && known_version(&a.available)
+    (actionable(a) && !a.excluded && known_version(&a.version) && known_version(&a.available))
+        || crate::github_update::ready(a)
 }
 pub fn classify(
     kind: &str,
@@ -253,7 +256,12 @@ pub fn classify(
     }
     if kind == "update"
         && after.is_some_and(|a| {
-            a.version == before.available && a.version != before.version && !a.ambiguous
+            (a.version == before.available
+                || (before.winget_id.is_none()
+                    && crate::releases::compare(&a.version, &before.available)
+                        == "Matches release"))
+                && a.version != before.version
+                && !a.ambiguous
         })
     {
         return "verified";

@@ -27,7 +27,7 @@ else {
       app.exit(0); return;
     }
     const state = () => ({ ...service.state(), demo, version: app.getVersion() });
-    window = new BrowserWindow({ width: 1320, height: 860, minWidth: 820, minHeight: 600, title: 'AppTide', backgroundColor: '#f7f9fb', autoHideMenuBar: true, show: !smokeDirectory, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
+    window = new BrowserWindow({ icon: path.join(__dirname, '../assets/apptide.png'), width: 1320, height: 860, minWidth: 820, minHeight: 600, title: 'AppTide', backgroundColor: '#f7f9fb', autoHideMenuBar: true, show: !smokeDirectory, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (e, url) => { if (url !== page) e.preventDefault(); });
     window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));

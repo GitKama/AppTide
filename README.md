@@ -4,9 +4,9 @@
 
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.4-beta.1/AppTide-0.2.4-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.4-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.5-beta.1/AppTide-0.2.5-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.5-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-Current release: **0.2.4-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
+Current release: **0.2.5-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
 
 ![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
@@ -16,7 +16,7 @@ Current release: **0.2.4-beta.1**. Portable, with a custom native immediate-mode
 2. Launch **`AppTide-Beta.exe`** and choose **Check for updates**.
 3. Select an app to inspect its source and available actions, or preview a batch of supported updates.
 
-The beta targets **Windows x64**. Live package operations require WinGet, supplied through Windows App Installer. Release binaries are currently unsigned. Keep the packaged executable name and companion files together so AppTide can update itself.
+The beta targets **Windows x64**. WinGet operations require Windows App Installer; supported GitHub installers use their own release assets. Release binaries are currently unsigned. Keep the packaged executable name and companion files together so AppTide can update itself.
 
 Automatic app updates are **off by default**. Enable them in Settings and opt in each app you want managed automatically. Checks run hourly while AppTide is open; there is no installed background service or startup task.
 
@@ -30,11 +30,17 @@ Automatic app updates are **off by default**. Enable them in Settings and opt in
 | Visible action controls | Long app lists are virtualized; details scroll independently and update/uninstall controls stay visible. |
 | Your own catalogue | Add manually tracked apps, maintain versions, attach official source links and GitHub projects, and save update notes. |
 | Coverage beyond WinGet | A bundled database of 14 product/family recipes plus Steam and Microsoft Store ownership rules identifies known update routes. |
-| GitHub release watches | Track public stable releases, compare supported version formats, and open the project's releases page. Watches refresh during scans with caching, or on request. |
+| GitHub updates | Detect projects from installed metadata and reviewed recipes; download compatible release installers, verify SHA256, update individually or in the shared queue, and verify the installed version. |
 | Local history | Retain version observations, first/last sightings, preferences, bounded WinGet-log evidence, and verified, failed or unverified operation receipts. |
 | AppTide self-updates | Check for newer AppTide releases at startup and offer an update-and-restart action with download verification and package backups. |
 
 WinGet can recognize software installed outside WinGet, so you do not need to reinstall everything through a new package manager. Execution still requires a reliable package match. For other apps, AppTide shows an official update route, a release watch, or **Needs research** rather than guessing an installer.
+
+## Update GitHub apps
+
+Select a detected app, check its **GitHub updates** project, then choose **Update this app** or **Update all**. If several installers match, choose the Windows installer in the details panel first. The preview shows the project, installer and target version. Enable **Allow automatic updates** for supported recipes, plus the hourly switch in Settings, to opt in.
+
+![AppTide GitHub installer update using synthetic demonstration data](docs/github-beta.png)
 
 ## Update Microsoft Store apps
 
@@ -52,7 +58,7 @@ Open **My catalogue → Add custom app** to track software yourself. Save its na
 
 Detected names and versions remain tied to the inventory; manually tracked entries are clearly identified. **Stop tracking** retains history without uninstalling software.
 
-The bundled recipes include routes for products such as ExifToolGUI, Meetily, Creative Cloud, NVIDIA software, Everything, browsers and game launchers. Each recipe records its public source and review date. These entries provide recognition and instructions; **custom routes and GitHub watches do not automatically download or execute third-party installers**.
+The bundled recipes include routes for products such as ExifToolGUI, Meetily, Creative Cloud, NVIDIA software, Everything, browsers and game launchers. Each recipe records its public source and review date. GitHub installers now support in-app updates. Reviewed Meetily and ExifToolGUI user installations also support per-app automatic opt-in. Other compatible EXE/MSI installers use interactive setup; archives and unsupported assets remain release links. See [GitHub update support and boundaries](docs/GITHUB-UPDATES.md).
 
 See [how the catalogue works and how to contribute recipes](docs/CATALOGUE.md).
 

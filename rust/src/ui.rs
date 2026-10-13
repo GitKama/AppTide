@@ -26,6 +26,7 @@ enum Command {
     Import,
     Watch(String, String),
     RefreshWatch(String),
+    SelectAsset(String, u64),
     AutoPreference(Option<String>, bool),
     Automatic,
     Folder(String, bool),
@@ -149,6 +150,19 @@ pub fn style(ctx: &egui::Context) {
     }
 }
 impl Tide {
+    pub fn github_preview(&mut self) {
+        if !self.demo {
+            return;
+        }
+        if let Some(a) = self.catalog.apps.get_mut("recipe-demo") {
+            crate::releases::apply(
+                a,
+                &serde_json::json!({"repository":"FrankBijnen/ExifToolGui","latest":"V6.1.0","checkedAt":"Synthetic preview","assets":[{"id":1,"name":"ExifToolGUI_install_6.1.0.exe","browser_download_url":"https://github.com/FrankBijnen/ExifToolGui/releases/download/V6.1.0/ExifToolGUI_install_6.1.0.exe","digest":format!("sha256:{}","a".repeat(64)),"size":100,"state":"uploaded"}]}),
+            );
+        }
+        self.page = Page::Updates;
+        self.selected = Some("recipe-demo".into());
+    }
     pub fn store_preview(&mut self) {
         if self.demo {
             self.page = Page::Store;
@@ -353,6 +367,13 @@ impl Tide {
                     }
                     Command::Import => service.import_alpha(),
                     Command::Watch(id, repo) => service.watch(&id, &repo),
+                    Command::SelectAsset(id, asset) => service
+                        .catalog
+                        .apps
+                        .get_mut(&id)
+                        .ok_or("App no longer exists".into())
+                        .and_then(|a| crate::github_update::select(a, asset))
+                        .and_then(|_| service.save()),
                     Command::RefreshWatch(id) => {
                         service.cancel.store(false, Ordering::Relaxed);
                         service.refresh_releases(Some(&id));
@@ -648,7 +669,7 @@ impl Tide {
         if remove.clicked() {
             self.prepare("uninstall", vec![a.uid.clone()]);
         }
-        if !actionable(&a) {
+        if !actionable(&a) && crate::github_update::offer(&a).is_none() {
             ui.label(
                 RichText::new(if a.protected {
                     "Windows component protected from changes."
@@ -674,6 +695,30 @@ impl Tide {
             self.details_reset = false;
         }
         scroll.show(ui,|ui|{
+            let mut automatic=a.auto_update && a.extra.get("automaticConsent")==Some(&serde_json::json!(2)) && (actionable(&a) || crate::github_update::automatic_allowed(&a));
+            if ui.add_enabled(!self.busy && (actionable(&a) || crate::github_update::consent_key(&a).is_some()),egui::Checkbox::new(&mut automatic,"Allow automatic updates")).changed(){self.send(Command::AutoPreference(Some(a.uid.clone()),automatic),"Saving automatic update choice…");}
+            ui.label(RichText::new("Also requires the global switch in Settings.").small().color(MUTED));
+            ui.add_space(12.0);ui.label(RichText::new("GitHub updates").strong());
+            if self.watch_app!=a.uid {self.watch_app=a.uid.clone();self.watch_input=crate::releases::repository(&a).unwrap_or("").into();}
+            ui.add_sized([ui.available_width(),32.0],egui::TextEdit::singleline(&mut self.watch_input).hint_text("owner/repository"));
+            ui.horizontal(|ui|{
+                if ui.add_enabled(!self.busy,egui::Button::new("Connect project")).clicked(){self.send(Command::Watch(a.uid.clone(),self.watch_input.clone()),"Saving and checking release watch…");}
+                if ui.add_enabled(!self.busy && crate::releases::repository(&a).is_some(),egui::Button::new("Refresh")).clicked(){self.send(Command::RefreshWatch(a.uid.clone()),"Checking stable release…");}
+            });
+            ui.label(RichText::new("Compatible installers update here. Archives and unsupported releases open on GitHub.").small().color(MUTED));
+            let choices=crate::github_update::candidates(&a);
+            if a.winget_id.is_none() && !choices.is_empty() {
+                let chosen=crate::github_update::offer(&a);
+                if choices.len()>1 {
+                    egui::ComboBox::from_id_salt(("github_asset",&a.uid)).selected_text(chosen.as_ref().map(|o|o.name.as_str()).unwrap_or("Choose Windows installer")).width(ui.available_width().min(300.0)).show_ui(ui,|ui|{for o in &choices {if ui.add_enabled(!self.busy,egui::Button::new(&o.name)).clicked(){self.send(Command::SelectAsset(a.uid.clone(),o.id),"Saving installer choice…");}}});
+                }
+                if let Some(o)=chosen {field(ui,"Installer",&o.name);field(ui,"Installer version",&o.version);ui.label(RichText::new(if o.mode=="interactive" || o.mode=="msi" {"Windows setup may ask you to finish installation."}else{"Reviewed installer: supports unattended updates."}).small().color(MUTED));}
+            } else if a.winget_id.is_some() {ui.label("WinGet is the preferred update route for this app.");}
+            else if a.extra.get("watch").is_some_and(|w|w["assets"].is_array()) {ui.label("No compatible installer with a GitHub SHA256 digest. Open releases to review other formats.");}
+            if let Some(w)=a.extra.get("watch") {if let Some(e)=w["error"].as_str(){ui.label(e);}field(ui,"Project detected from",w["association"].as_str().map(|s|match s{"installed-metadata"=>"Installed app metadata","bundled-recipe"=>"Reviewed product recipe",_=>"Your project choice"}).unwrap_or("Not connected"));field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
+                if let Some(t)=w["checkedAt"].as_str(){field(ui,"Last successful check",t);}}
+            if let Some(repo)=crate::releases::repository(&a) && ui.link("Open project releases").clicked(){open_url(&format!("https://github.com/{repo}/releases"));}
+
             if a.kind=="appx" && a.extra.get("signatureKind").and_then(|v|v.as_str())==Some("Store") && ui.button("Manage Microsoft Store updates").clicked(){self.page=Page::Store;}
             if let Some(sources)=a.extra.get("metadataSources") {
                 field(ui,"Vendor source",sources["publisher"].as_str().unwrap_or("Not reported"));
@@ -697,20 +742,6 @@ impl Tide {
             if let Some(l)=a.extra.get("learning"){ui.label(RichText::new(format!("{} versions / {} verified operations",l["versionSightings"],l["verifiedOperations"])).small().color(MUTED));}
             if let Some(notice)=a.extra.get("identityNotice").and_then(|v|v.as_str()){ui.label(notice);}
 
-            let mut automatic=a.auto_update && a.extra.get("automaticConsent")==Some(&serde_json::json!(2));
-            if ui.add_enabled(!self.busy && actionable(&a),egui::Checkbox::new(&mut automatic,"Allow automatic WinGet updates")).changed(){self.send(Command::AutoPreference(Some(a.uid.clone()),automatic),"Saving automatic update choice…");}
-            ui.label(RichText::new("Also requires the global switch in Settings.").small().color(MUTED));
-            ui.add_space(12.0);ui.label(RichText::new("GitHub release watch").strong());
-            if self.watch_app!=a.uid {self.watch_app=a.uid.clone();self.watch_input=crate::releases::repository(&a).unwrap_or("").into();}
-            ui.add_sized([ui.available_width(),32.0],egui::TextEdit::singleline(&mut self.watch_input).hint_text("owner/repository"));
-            ui.horizontal(|ui|{
-                if ui.add_enabled(!self.busy,egui::Button::new("Save watch")).clicked(){self.send(Command::Watch(a.uid.clone(),self.watch_input.clone()),"Saving and checking release watch…");}
-                if ui.add_enabled(!self.busy && crate::releases::repository(&a).is_some(),egui::Button::new("Refresh")).clicked(){self.send(Command::RefreshWatch(a.uid.clone()),"Checking stable release…");}
-            });
-            ui.label(RichText::new("Tracks releases only. Review the edition and installer yourself.").small().color(MUTED));
-            if let Some(w)=a.extra.get("watch") {field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
-                if let Some(t)=w["checkedAt"].as_str(){field(ui,"Last successful check",t);}}
-            if let Some(repo)=crate::releases::repository(&a) && ui.link("Open project releases").clicked(){open_url(&format!("https://github.com/{repo}/releases"));}
             ui.add_space(8.0);ui.label(RichText::new("Observed versions").strong());for v in a.versions.iter().rev(){ui.horizontal(|ui|{ui.label(&v.version);ui.label(RichText::new(v.seen_at.get(..10).unwrap_or(&v.seen_at)).size(12.0).color(MUTED));});}
             if !a.location.is_empty(){ui.add_space(8.0);field(ui,"Location",&a.location);}
         });
@@ -829,7 +860,7 @@ impl Tide {
         if button.clicked() {
             self.show_logs();
         }
-        ui.label("Logs contain app events; receipts contain WinGet output; batches contain queue plans and stop reasons. Keep these files private.");
+        ui.label("Logs contain app events; receipts contain installer output; batches contain queue plans and stop reasons. Keep these files private.");
         if self.catalog.receipts.is_empty() {
             ui.add_space(30.0);
             ui.heading("A history you can check.");
@@ -878,7 +909,7 @@ impl Tide {
         ui.label("Reviewed public recipes identify update owners and release sources. Your installed inventory, histories and receipts stay on this PC. Unknown apps remain research candidates; observations never authorize arbitrary installers.");
         ui.add_space(16.0);ui.heading("Automatic updates while open");
         let mut automatic=self.catalog.settings["automatic"]==true && self.catalog.settings["automaticConsent"]==2;
-        if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut automatic,"Check hourly and update opted-in WinGet apps")).changed(){self.send(Command::AutoPreference(None,automatic),"Saving automatic update choice…");}
+        if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut automatic,"Check hourly and update opted-in apps")).changed(){self.send(Command::AutoPreference(None,automatic),"Saving automatic update choice…");}
         ui.label("Off by default. Enable individual apps in their details. The first check is one hour after enabling. Failed or unverified operations block automatic retries until a manual operation verifies successfully. Closing AppTide stops scheduling; no service or startup task is installed.");
         ui.add_space(16.0);ui.heading("Portable app folders");
         ui.label("Read executable version metadata in folders you choose, up to two subfolder levels. Nothing is launched. Portable discoveries do not grant install or removal permission.");
@@ -1140,7 +1171,7 @@ impl Tide {
         if let Some(plan) = self.plan.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
+            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().or_else(||crate::releases::repository(a)).unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));if let Some(o)=crate::github_update::offer(a){ui.label(format!("Installer: {}",o.name));ui.label(if o.mode=="interactive" || o.mode=="msi" {"Runs Windows setup; follow any installer prompts."}else{"Runs the reviewed unattended installer. Save your work first."});}ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
             if cancel {
                 self.plan = None;
             }
@@ -1360,6 +1391,59 @@ fn open_project() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn github_update_button_confirms_and_runs_through_worker() {
+        for size in [Vec2::new(1440.0, 900.0), Vec2::new(1040.0, 650.0)] {
+            let ctx = egui::Context::default();
+            let mut service = Service::open(Default::default(), true).unwrap();
+            let mut a = crate::github_update::tests::app();
+            crate::github_update::synchronize(&mut a);
+            service.catalog.apps.insert(a.uid.clone(), a.clone());
+            let mut app = Tide::new(service, &ctx);
+            app.selected = Some(a.uid.clone());
+            for _ in 0..3 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let rect = app.update_rect.unwrap();
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(rect));
+            let click = |app: &mut Tide, rect: Rect| {
+                let pos = rect.center();
+                for pressed in [true, false] {
+                    frame(
+                        app,
+                        &ctx,
+                        size,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                    );
+                }
+            };
+            click(&mut app, rect);
+            assert!(app.plan.is_some());
+            assert!(app.catalog.receipts.is_empty());
+            for _ in 0..2 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let rect = app.confirm_rect.unwrap();
+            click(&mut app, rect);
+            for _ in 0..100 {
+                std::thread::sleep(Duration::from_millis(10));
+                frame(&mut app, &ctx, size, vec![]);
+                if !app.busy {
+                    break;
+                }
+            }
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert_eq!(app.catalog.receipts.last().unwrap()["status"], "verified");
+        }
+    }
     #[test]
     fn store_buttons_fit_and_confirmation_reaches_the_worker() {
         for size in [Vec2::new(1440.0, 900.0), Vec2::new(1040.0, 650.0)] {

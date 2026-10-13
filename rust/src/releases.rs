@@ -31,6 +31,45 @@ pub fn repository(a: &App) -> Option<&str> {
         .or_else(|| a.knowledge.as_ref().map(|k| k.repository.as_str()))
         .filter(|s| valid_repository(s))
 }
+pub fn detect(a: &mut App) {
+    if a.extra.get("watchDisabled") == Some(&json!(true))
+        || (repository(a).is_some()
+            && a.extra
+                .get("watch")
+                .is_none_or(|w| w["association"] != "installed-metadata"))
+    {
+        return;
+    }
+    let repos: std::collections::BTreeSet<String> = ["urlInfoAbout", "urlUpdateInfo"]
+        .iter()
+        .filter_map(|key| a.extra.get(*key).and_then(Value::as_str))
+        .filter_map(|url| url.strip_prefix("https://github.com/"))
+        .filter_map(|path| {
+            let mut p = path.split('/');
+            let r = format!("{}/{}", p.next()?, p.next()?);
+            valid_repository(&r).then_some(r)
+        })
+        .collect();
+    if repos.len() == 1
+        && a.extra
+            .get("watch")
+            .is_some_and(|w| w["repository"].as_str() == repos.first().map(String::as_str))
+    {
+        return;
+    }
+    if a.extra
+        .get("watch")
+        .is_some_and(|w| w["association"] == "installed-metadata")
+    {
+        a.extra.remove("watch");
+        a.extra.remove("githubAutomaticConsent");
+        a.extra.remove("githubAssetId");
+        a.auto_update = false;
+    }
+    if repos.len() == 1 {
+        a.extra.insert("watch".into(),json!({"repository":repos.first().unwrap(),"association":"installed-metadata","status":"Not checked"}));
+    }
+}
 pub fn set_watch(a: &mut App, repo: &str) -> Result<()> {
     let normalized = normalize_repository(repo);
     let repo = normalized.as_str();
@@ -43,6 +82,8 @@ pub fn set_watch(a: &mut App, repo: &str) -> Result<()> {
         return Err("Use a public GitHub owner/repository, without a URL or spaces.".into());
     }
     a.extra.remove("watchDisabled");
+    a.extra.remove("githubAutomaticConsent");
+    a.extra.remove("githubAssetId");
     if let Some(w) = a.extra.get_mut("watch")
         && w["repository"] == repo
     {
@@ -99,7 +140,7 @@ pub fn fetch(repo: &str) -> Result<Value> {
         return Err("No valid stable release returned".into());
     }
     Ok(
-        json!({"repository":repo,"latest":v["tag_name"],"checkedAt":now(),"publishedAt":v["published_at"]}),
+        json!({"repository":repo,"latest":v["tag_name"],"checkedAt":now(),"publishedAt":v["published_at"],"assets":v["assets"]}),
     )
 }
 pub fn api(path: &str) -> Result<Value> {
@@ -129,17 +170,18 @@ pub fn api(path: &str) -> Result<Value> {
 pub fn apply(a: &mut App, release: &Value) {
     let mut watch = release.clone();
     watch["status"] = compare(&a.version, release["latest"].as_str().unwrap_or("")).into();
-    watch["association"] = if a
+    watch["association"] = a
         .extra
         .get("watch")
-        .is_some_and(|w| w["association"] == "user-selected")
-    {
-        "user-selected"
-    } else {
-        "bundled-recipe"
-    }
-    .into();
+        .and_then(|w| w["association"].as_str())
+        .unwrap_or("bundled-recipe")
+        .into();
     a.extra.insert("watch".into(), watch);
+    crate::github_update::synchronize(a);
+    if let Some(o) = crate::github_update::offer(a) {
+        let status = compare(&a.version, &o.version);
+        a.extra.get_mut("watch").unwrap()["status"] = status.into();
+    }
 }
 pub fn newer(a: &App) -> bool {
     a.extra
@@ -150,6 +192,31 @@ pub fn newer(a: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detection_uses_exact_metadata_and_preserves_cache_and_overrides() {
+        let mut a = App::default();
+        a.extra.insert(
+            "urlInfoAbout".into(),
+            "https://github.com/example/project/releases".into(),
+        );
+        detect(&mut a);
+        assert_eq!(repository(&a), Some("example/project"));
+        a.extra.get_mut("watch").unwrap()["checkedAt"] = "cached".into();
+        detect(&mut a);
+        assert_eq!(a.extra["watch"]["checkedAt"], "cached");
+        a.extra.insert(
+            "urlUpdateInfo".into(),
+            "https://github.com/other/project".into(),
+        );
+        detect(&mut a);
+        assert!(repository(&a).is_none());
+        set_watch(&mut a, "chosen/project").unwrap();
+        detect(&mut a);
+        assert_eq!(repository(&a), Some("chosen/project"));
+        set_watch(&mut a, "").unwrap();
+        detect(&mut a);
+        assert!(repository(&a).is_none());
+    }
     #[test]
     fn watch_editor_accepts_project_urls_and_can_disable_bundled_watches() {
         let mut a = App {

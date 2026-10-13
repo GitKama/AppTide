@@ -50,7 +50,7 @@ pub fn read() -> Result<Vec<App>> {
                     protected: app.get_value::<u32, _>("SystemComponent").unwrap_or(0) == 1
                         || app.get_value::<u32, _>("NoRemove").unwrap_or(0) == 1,
                     extra: [("metadataSources".into(), serde_json::json!({"name":"Registry DisplayName","publisher":if get("Publisher").trim().is_empty(){"Not reported"}else{"Registry Publisher"},"version":if get("DisplayVersion").trim().is_empty(){"Not reported"}else{"Registry DisplayVersion"}})),
-                        ("installDate".into(), get("InstallDate").into())].into(),
+                        ("urlInfoAbout".into(), get("URLInfoAbout").into()), ("urlUpdateInfo".into(), get("URLUpdateInfo").into()), ("installDate".into(), get("InstallDate").into())].into(),
                     ..Default::default()
                 });
             }

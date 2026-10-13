@@ -1,5 +1,17 @@
 # AppTide validation
 
+## Rust 0.2.5-beta.1
+
+- 66 default Rust tests, 25 legacy tests, formatting, Clippy with warnings denied and the optimized Windows x64 build passed. Three opt-in tests are skipped by default; the new public-download and synthetic-launcher tests were explicitly run and passed.
+
+- Mixed-provider queue, asset ambiguity, changed hashes, repository metadata conflicts/overrides, exact installer revisions, identity isolation and automatic-consent regressions.
+- Actual egui clicks at desktop and compact sizes open the GitHub update preview, confirm it and verify the simulated operation through the worker.
+- A public Meetily installer was downloaded by the production downloader and verified with SHA256 and size checks without running it. A harmless synthetic GUI executable exercised interactive, NSIS and Inno launcher modes with its expected exit code.
+- A fresh scan against a private catalogue copy completed. It discovered additional GitHub associations from installed metadata, enabled the known pending GitHub installer, and correctly marked the already-current installer revision. Private inventory was not published.
+- Native desktop/compact demo captures and the icon extracted from the built executable were visually inspected. The UI detector returned no findings.
+- Real third-party installations and unattended installer compatibility remain unverified; no installed apps were updated or removed during validation.
+
+
 ## Rust 0.2.4-beta.1
 
 - 55 Rust tests passed; the opt-in public-download test remains ignored by default. Formatting, Clippy with warnings denied and the optimized Windows x64 build passed using the repository's static MSVC runtime configuration.

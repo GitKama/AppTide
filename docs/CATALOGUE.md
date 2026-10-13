@@ -22,22 +22,22 @@ The same editor can attach sources and notes to detected apps, while their detec
 - Other reviewed routes include Creative Cloud, NVIDIA App, Battle.net, browser updaters and official vendor downloads. Each recipe includes its source. These routes provide instructions, not an independently verified update state.
 - Identical current-user registry registrations shared across 32/64-bit views are collapsed. Different keys, versions, publishers, locations and protection flags remain distinct. This is not universal product deduplication.
 
-## GitHub release watches
+## GitHub updates
 
-Select an app and save `owner/repository` in its details, or use its bundled association. Checks use the public [latest stable release API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release), without credentials, inventory or local paths. Successful checks are cached for six hours during scans; explicit refresh has a one-minute cooldown. Each pass checks at most 20 repositories and stops on a network/rate-limit error. Response size and process duration are bounded.
+Projects are detected from reviewed name/publisher recipes or unambiguous HTTPS GitHub URLs in installed registry metadata. Explicit user choices take precedence; clearing a project disables detection for that entry. Conflicting metadata stays unresolved.
 
-Numeric tags can be compared with numeric installed versions (including leading v/V and `_32`/`_64` packaging suffixes). Other formats require review. A newer tag is not proof that an asset is compatible. AppTide opens the releases page; it does not download or run arbitrary assets. Changing an observed publisher clears release associations and automatic-update consent. Cached comparisons are recomputed when the installed version changes.
+Public stable releases are checked without credentials or uploading inventory. Successful checks are cached for one hour; explicit refresh is immediate. Each scan checks at most 20 repositories; failures are recorded without abandoning the remaining repositories. Old watch-only cache records are refreshed to obtain release assets.
 
-Initial public release sources include [ExifToolGUI](https://github.com/FrankBijnen/ExifToolGui/releases) and [Meetily Community](https://github.com/Zackriya-Solutions/meetily/releases). An edition or private fork must not be silently mapped to another product.
+Compatible installers now participate in individual and bulk updates. Reviewed recipes add unattended support, with separate per-app consent. The full selection, integrity, scope and verification policy is documented in [GitHub updates](GITHUB-UPDATES.md). Unsupported assets remain release links.
 
 ## Private learning
 
-Every scan preserves version history and adds observations. A unique native registration that becomes WinGet-correlated retains its history. Local `learning` records summarize retained version sightings and operation outcomes. Failed/unverified operations block automatic retries; successful manual verification can unblock them. Publisher changes revoke automatic consent. None of these observations bypasses WinGet identity checks.
+Every scan preserves version history and adds observations. A unique native registration that becomes WinGet-correlated retains its history. Local `learning` records summarize retained version sightings and operation outcomes. Failed/unverified operations block automatic retries; successful manual verification can unblock them. Publisher changes revoke automatic consent. None of these observations bypasses provider identity or installer-integrity checks.
 
-Use Installed apps or My catalogue filters to see **Beyond WinGet**, **Needs research**, or **Release watches**. The primary action opens the official instructions or releases for known custom routes. Direct automatic updates remain restricted to WinGet.
+Use Installed apps or My catalogue filters to see **Beyond WinGet**, **Needs research**, or **Release watches**. The primary action opens the official instructions or releases for known custom routes. Direct automatic updates support WinGet and the reviewed GitHub user-installation recipes.
 
 ## Contributing a bundled recipe
 
 Start with public documentation and synthetic metadata fixtures. Include a narrow identity rule, an official source, a review date and a plain-language update route. Never copy someone's inventory, local paths, logs, credentials or private product names into a pull request. Review false positives, architecture, editions and release channels. Detection guidance is not an executable update recipe.
 
-Automatic custom installers remain a later milestone: immutable assets, integrity/signature policy, architecture/scope selection and disposable-Windows installation/upgrade/removal checks must come first. Retain old releases and changelog entries when the database evolves.
+New automatic installer recipes require a reviewed upstream build definition, narrow identity and scope rules, release asset integrity, and installation testing. Portable archive replacement remains unsupported. Retain old releases and changelog entries when the database evolves.

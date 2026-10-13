@@ -106,8 +106,13 @@ pub fn enrich(c: &mut Catalog) {
         if stale {
             a.extra.remove("watch");
         }
+        crate::releases::detect(a);
+        crate::github_update::synchronize(a);
+        let installer_version = crate::github_update::offer(a).map(|o| o.version);
         if let Some(w) = a.extra.get_mut("watch")
-            && let Some(latest) = w["latest"].as_str()
+            && let Some(latest) = installer_version
+                .as_deref()
+                .or_else(|| w["latest"].as_str())
         {
             w["status"] = crate::releases::compare(&a.version, latest).into();
         }
@@ -118,9 +123,10 @@ pub fn enrich(c: &mut Catalog) {
                 a.winget_id
                     .as_deref()
                     .is_some_and(|id| r["packageId"] == id)
+                    || r["appId"] == a.uid
             })
             .collect();
-        a.extra.insert("learning".into(),serde_json::json!({"schema":1,"versionSightings":a.versions.len(),"verifiedOperations":receipts.iter().filter(|r|r["status"]=="verified").count(),"unverifiedOperations":receipts.iter().filter(|r|r["status"]=="unverified" || r["status"]=="failed").count(),"recipeRevision":DATABASE.revision,"executionAuthority":"WinGet identity and explicit consent only"}));
+        a.extra.insert("learning".into(),serde_json::json!({"schema":1,"versionSightings":a.versions.len(),"verifiedOperations":receipts.iter().filter(|r|r["status"]=="verified").count(),"unverifiedOperations":receipts.iter().filter(|r|r["status"]=="unverified" || r["status"]=="failed").count(),"recipeRevision":DATABASE.revision,"executionAuthority":"WinGet or verified GitHub release asset with explicit consent"}));
     }
 }
 pub fn route(a: &App) -> &str {
@@ -130,6 +136,8 @@ pub fn route(a: &App) -> &str {
         "Review identity"
     } else if a.winget_id.is_some() {
         "WinGet"
+    } else if crate::github_update::offer(a).is_some() {
+        "GitHub installer"
     } else if crate::custom::get(a).is_some() {
         "Your custom source"
     } else if a

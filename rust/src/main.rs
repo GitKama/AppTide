@@ -2,6 +2,7 @@
 mod catalog;
 mod custom;
 mod diagnostics;
+mod github_update;
 mod inventory;
 mod knowledge;
 mod portable;
@@ -96,6 +97,10 @@ fn run() -> Result<(), String> {
     let catalogue_preview = args.iter().any(|a| a == "--catalogue-preview");
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../../assets/apptide.png"))
+                    .expect("Bundled AppTide icon"),
+            )
             .with_inner_size(if compact {
                 [1040.0, 700.0]
             } else {
@@ -112,6 +117,9 @@ fn run() -> Result<(), String> {
             let mut app = ui::Tide::new(service, &cc.egui_ctx);
             app.screenshot = screenshot;
             app.scrolled_demo = scrolled;
+            if args.iter().any(|a| a == "--github-preview") {
+                app.github_preview();
+            }
             if catalogue_preview {
                 app.catalogue_preview();
             }

@@ -1,5 +1,15 @@
 # Changes
 
+## 0.2.5-beta.1 — 13 October 2026
+
+- Turn compatible GitHub release watches into verified installer updates, individually or in Update all; add a chooser for multiple Windows installers.
+- Detect GitHub projects from installed metadata and reviewed product/publisher recipes, preserving user overrides and disabled watches.
+- Add separate automatic opt-in for reviewed current-user Meetily and ExifToolGUI installers. Generic EXE/MSI installers remain interactive.
+- Compare ExifToolGUI installer revisions; bind previews to release assets and SHA256, verify installed versions, and retain private Activity receipts.
+- Refresh old watch-only caches; use hourly caching with immediate manual refresh; continue other repositories after a failed check.
+- Add an original teal A/wave icon to the executable, native window/taskbar and legacy packaging.
+
+
 ## 0.2.4-beta.1 — 11 October 2026
 
 - Add a Microsoft Store page with read-only checks, a separate bulk-update preview/confirmation, a fresh preflight, private output logs and installed-version verification through the installed consumer Store CLI.

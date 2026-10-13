@@ -293,13 +293,21 @@ impl Service {
                 let recent = a
                     .extra
                     .get("watch")
-                    .and_then(|w| w["checkedAt"].as_str())
+                    .and_then(|w| {
+                        w["attemptedAt"]
+                            .as_str()
+                            .or_else(|| w["checkedAt"].as_str())
+                    })
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .is_some_and(|t| {
                         chrono::Utc::now().signed_duration_since(t).num_seconds()
-                            < if only.is_some() { 60 } else { 21600 }
+                            < if only.is_some() { 0 } else { 3600 }
                     });
-                if !recent {
+                if !recent
+                    || a.extra
+                        .get("watch")
+                        .is_none_or(|w| !w["assets"].is_array() && w["attemptedAt"].is_null())
+                {
                     repos.insert(repo.to_string());
                 }
             }
@@ -318,7 +326,17 @@ impl Service {
                 }
                 Err(e) => {
                     self.warnings.push(format!("{repo}: {e}"));
-                    break;
+                    for a in self
+                        .catalog
+                        .apps
+                        .values_mut()
+                        .filter(|a| crate::releases::repository(a) == Some(repo.as_str()))
+                    {
+                        if let Some(w) = a.extra.get_mut("watch") {
+                            w["error"] = e.clone().into();
+                            w["attemptedAt"] = now().into();
+                        }
+                    }
                 }
             }
         }
@@ -331,6 +349,7 @@ impl Service {
             .get_mut(id)
             .ok_or("App no longer exists")?;
         crate::releases::set_watch(a, repository.trim())?;
+        crate::github_update::synchronize(a);
         if let Some(mut source) = crate::custom::get(a) {
             source.repository = repository.trim().into();
             a.extra
@@ -403,8 +422,14 @@ impl Service {
                 .apps
                 .get_mut(id)
                 .ok_or("App no longer exists")?;
-            if enabled && !actionable(a) {
-                return Err("Only unambiguous WinGet apps can opt in.".into());
+            if enabled && !actionable(a) && crate::github_update::consent_key(a).is_none() {
+                return Err(
+                    "Automatic updates require WinGet or a reviewed GitHub installer recipe."
+                        .into(),
+                );
+            }
+            if let Some(key) = crate::github_update::consent_key(a) {
+                a.extra.insert("githubAutomaticConsent".into(), key.into());
             }
             a.auto_update = enabled;
             a.extra.insert("automaticConsent".into(), 2.into());
@@ -459,13 +484,14 @@ impl Service {
         // Persist the attempt before any scan/installer. Restart cannot create a retry loop.
         self.catalog.settings["lastAutomaticAttempt"] = now().into();
         self.save()?;
-        if !self.scan()? {
-            return Err("Automatic check skipped: WinGet unavailable.".into());
-        }
+        let winget_complete = self.scan()?;
         if self.cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let ids = automatic_candidates(&self.catalog);
+        let ids: Vec<_> = automatic_candidates(&self.catalog)
+            .into_iter()
+            .filter(|id| winget_complete || self.catalog.apps[id].winget_id.is_none())
+            .collect();
         if ids.is_empty() {
             return Ok(());
         }
@@ -571,6 +597,9 @@ impl Service {
                     stderr: String::new(),
                 });
             }
+            if kind == "update" && before.winget_id.is_none() {
+                return crate::github_update::install(before, &service.directory.join("downloads"));
+            }
             winget::run("winget.exe", &winget::args(kind, before)?, None)
         })
     }
@@ -671,7 +700,7 @@ impl Service {
             "Checking installed versions before proceeding…",
             &self.catalog,
         );
-        if !scan(self)? {
+        if !scan(self)? && plan.apps.iter().any(|a| a.winget_id.is_some()) {
             return Err(format!(
                 "WinGet preflight failed. No software changed. {}",
                 self.warnings.join(" ")
@@ -683,7 +712,7 @@ impl Service {
                 break;
             }
             let receipt_id = format!("{}-{}", chrono::Utc::now().timestamp_millis(), before.uid);
-            let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"status":"running"});
+            let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"appId":before.uid,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"provider":if before.winget_id.is_some(){"WinGet"}else{"GitHub"},"status":"running"});
             // Never silently change the reviewed target. Skip stale items without blocking unrelated apps.
             if let Err(reason) = validate_app(&plan.kind, before, &self.catalog) {
                 receipt["status"] = "skipped".into();
@@ -710,7 +739,18 @@ impl Service {
                 &self.catalog,
             );
             let result = (|| -> Result<(i32, bool)> {
-                let args = winget::args(&plan.kind, before)?;
+                let args = if before.winget_id.is_none() {
+                    let offer = crate::github_update::offer(before)
+                        .ok_or("GitHub installer unavailable")?;
+                    receipt["githubAsset"] = json!(offer);
+                    vec![
+                        "GitHub release installer".into(),
+                        offer.repository,
+                        offer.name,
+                    ]
+                } else {
+                    winget::args(&plan.kind, before)?
+                };
                 receipt["command"] = json!(args);
                 let out = install(self, &plan.kind, before)?;
                 receipt["exitCode"] = out.code.into();
@@ -719,13 +759,13 @@ impl Service {
                     fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
                     fs::write(
                     receipts.join(format!("{receipt_id}.log")),
-                    format!("AppTide {}\nBatch: {batch_id}\nCommand: winget.exe {}\nExit code: {} (0x{:08X})\n--- stdout ---\n{}\n--- stderr ---\n{}", env!("CARGO_PKG_VERSION"), args.join(" "), out.code, out.code as u32, out.stdout, out.stderr),
+                    format!("AppTide {}\nBatch: {batch_id}\nOperation: {}\nExit code: {} (0x{:08X})\n--- stdout ---\n{}\n--- stderr ---\n{}", env!("CARGO_PKG_VERSION"), args.join(" "), out.code, out.code as u32, out.stdout, out.stderr),
                 )
                 .map_err(|e| e.to_string())?;
                     receipt["logFile"] = format!("{receipt_id}.log").into();
                 }
                 status("Verifying the installed software…", &self.catalog);
-                let complete = scan(self)?;
+                let complete = scan(self)? || before.winget_id.is_none();
                 if !complete {
                     receipt["scanWarnings"] = json!(self.warnings);
                 }
@@ -741,9 +781,7 @@ impl Service {
                         .catalog
                         .apps
                         .values()
-                        .filter(|a| {
-                            a.present && (a.winget_id == before.winget_id || a.key == before.key)
-                        })
+                        .filter(|a| a.present && crate::github_update::same_installation(a, before))
                         .collect();
                     let after = matches.first().copied();
                     let state = catalog::classify(
@@ -773,13 +811,16 @@ impl Service {
                     } else if let Some(reason) = winget::failure_hint(code) {
                         reason.to_string()
                     } else if matches.len() > 1 || after.is_some_and(|a| a.ambiguous) {
-                        format!("Multiple installed registrations match this package ({}). WinGet exit code: {code}. Review these installations before retrying; no automatic retry will run.", matches.iter().map(|a| a.version.as_str()).collect::<Vec<_>>().join(", "))
+                        format!("Multiple installed registrations match this package ({}). Installer exit code: {code}. Review these installations before retrying; no automatic retry will run.", matches.iter().map(|a| a.version.as_str()).collect::<Vec<_>>().join(", "))
                     } else {
-                        format!("Requested state not confirmed. WinGet exit code: {code} (0x{:08X}). Review the local output log before retrying.", code as u32)
+                        format!("Requested state not confirmed. Installer exit code: {code} (0x{:08X}). Review the local output log before retrying.", code as u32)
                     }
                     .into();
                 }
                 Err(e) => {
+                    if before.winget_id.is_none() {
+                        independent_apps_can_continue = scan(self).unwrap_or(false);
+                    }
                     receipt["status"] = "unverified".into();
                     receipt["detail"] = e.into();
                 }
@@ -836,7 +877,7 @@ pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
     let mut apps = vec![];
     for id in ids {
         let a = catalog.apps.get(id).ok_or("App no longer exists")?;
-        if !actionable(a) || (kind == "update" && !eligible(a)) {
+        if (kind == "uninstall" && !actionable(a)) || (kind == "update" && !eligible(a)) {
             return Err(
                 "App is protected, ambiguous, paused, or has no supported update source.".into(),
             );
@@ -868,12 +909,16 @@ pub fn automatic_candidates(c: &Catalog) -> Vec<String> {
         .filter(|a| {
             eligible(a)
                 && a.auto_update
+                && (actionable(a) || crate::github_update::automatic_allowed(a))
                 && a.extra.get("automaticConsent") == Some(&json!(2))
                 && c.receipts
                     .iter()
                     .rev()
                     .find(|r| {
-                        r["packageId"].as_str() == a.winget_id.as_deref()
+                        (a.winget_id
+                            .as_deref()
+                            .is_some_and(|id| r["packageId"] == id)
+                            || r["appId"] == a.uid)
                             && r["status"] != "skipped"
                     })
                     .is_none_or(|r| r["status"] == "verified")
@@ -886,7 +931,7 @@ fn validate_app(kind: &str, before: &App, catalog: &Catalog) -> Result<()> {
     let matches: Vec<_> = catalog
         .apps
         .values()
-        .filter(|a| a.present && a.winget_id == before.winget_id)
+        .filter(|a| a.present && crate::github_update::same_installation(a, before))
         .collect();
     if matches.len() != 1 {
         return Err(format!(
@@ -896,7 +941,9 @@ fn validate_app(kind: &str, before: &App, catalog: &Catalog) -> Result<()> {
         ));
     }
     let a = matches[0];
-    if !actionable(a)
+    if (kind == "uninstall" && !actionable(a))
+        || (before.winget_id.is_none()
+            && crate::github_update::offer(a) != crate::github_update::offer(before))
         || a.version != before.version
         || (kind == "update" && (!eligible(a) || a.available != before.available))
     {
@@ -968,6 +1015,7 @@ pub fn demo_catalog() -> Catalog {
         uid: "recipe-demo".into(),
         key: "registry:Demo:ExifToolGUI".into(),
         name: "ExifToolGUI version 6.0.0_64".into(),
+        scope: "user".into(),
         publisher: "FrankB".into(),
         version: "6.0.0_64".into(),
         kind: "registry".into(),
@@ -985,6 +1033,93 @@ pub fn demo_catalog() -> Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn github_automatic_requires_bound_consent_and_ignores_other_null_package_receipts() {
+        let mut s = Service::open(PathBuf::new(), true).unwrap();
+        let mut a = crate::github_update::tests::app();
+        a.name = "meetily".into();
+        a.publisher = "meetily".into();
+        a.version = "1.0".into();
+        a.knowledge = crate::knowledge::detect(&a);
+        let w = a.extra.get_mut("watch").unwrap();
+        w["repository"] = "Zackriya-Solutions/meetily".into();
+        w["assets"][0]["name"] = "meetily_2.0_x64-setup.exe".into();
+        w["assets"][0]["browser_download_url"]="https://github.com/Zackriya-Solutions/meetily/releases/download/v2.0/meetily_2.0_x64-setup.exe".into();
+        crate::github_update::synchronize(&mut a);
+        let id = a.uid.clone();
+        s.catalog.apps.insert(id.clone(), a);
+        assert!(!automatic_candidates(&s.catalog).contains(&id));
+        s.automatic_preference(Some(&id), true).unwrap();
+        assert!(automatic_candidates(&s.catalog).contains(&id));
+        s.catalog
+            .receipts
+            .push(json!({"packageId":null,"appId":"unrelated","status":"failed"}));
+        assert!(automatic_candidates(&s.catalog).contains(&id));
+        s.catalog
+            .receipts
+            .push(json!({"packageId":null,"appId":id,"status":"unverified"}));
+        assert!(!automatic_candidates(&s.catalog).contains(&id));
+        s.catalog
+            .receipts
+            .push(json!({"appId":id,"status":"verified"}));
+        assert!(automatic_candidates(&s.catalog).contains(&id));
+        s.catalog.apps.get_mut(&id).unwrap().publisher = "Changed".into();
+        assert!(!automatic_candidates(&s.catalog).contains(&id));
+    }
+    #[test]
+    fn mixed_queue_updates_github_without_matching_unrelated_unmanaged_apps() {
+        let (mut s, mut plan) = batch_fixture();
+        let mut a = crate::github_update::tests::app();
+        crate::github_update::synchronize(&mut a);
+        s.catalog.apps.insert(a.uid.clone(), a.clone());
+        plan.apps.push(a.clone());
+        assert!(prepare(&s.catalog, "uninstall", std::slice::from_ref(&a.uid)).is_err());
+        s.execute_with(plan, |_, _| {}, |_| Ok(true), simulated_update)
+            .unwrap();
+        assert_eq!(s.catalog.receipts.len(), 4);
+        let r = s.catalog.receipts.last().unwrap();
+        assert_eq!(r["status"], "verified");
+        assert_eq!(r["provider"], "GitHub");
+        assert_eq!(r["appId"], a.uid);
+        assert_eq!(r["githubAsset"]["id"], 1);
+    }
+    #[test]
+    fn github_changed_hash_is_skipped_before_installer_and_failure_does_not_block_winget() {
+        let (mut s, mut plan) = batch_fixture();
+        let mut a = crate::github_update::tests::app();
+        crate::github_update::synchronize(&mut a);
+        s.catalog.apps.insert(a.uid.clone(), a.clone());
+        plan.apps.insert(0, a.clone());
+        s.catalog
+            .apps
+            .get_mut(&a.uid)
+            .unwrap()
+            .extra
+            .get_mut("watch")
+            .unwrap()["assets"][0]["digest"] = format!("sha256:{}", "b".repeat(64)).into();
+        assert!(validate_app("update", &a, &s.catalog).is_err());
+        s.catalog.apps.insert(a.uid.clone(), a);
+        assert!(
+            s.execute_with(
+                plan,
+                |_, _| {},
+                |_| Ok(true),
+                |s, k, a| if a.winget_id.is_none() {
+                    Err("Hash mismatch: nothing installed".into())
+                } else {
+                    simulated_update(s, k, a)
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(s.catalog.receipts.len(), 4);
+        assert_eq!(s.catalog.receipts[0]["status"], "unverified");
+        assert!(
+            s.catalog.receipts[1..]
+                .iter()
+                .all(|r| r["status"] == "verified")
+        );
+    }
     #[test]
     fn store_changed_preview_never_starts_an_update() {
         let mut service = Service::open(PathBuf::new(), true).unwrap();
