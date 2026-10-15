@@ -51,13 +51,7 @@ pub fn detect(a: &App) -> Option<Knowledge> {
     if a.protected {
         return None;
     }
-    if a.kind == "registry"
-        && a.key.splitn(4, ':').nth(3).is_some_and(|key| {
-            key.strip_prefix("Steam App ").is_some_and(|id| {
-                !id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit())
-            })
-        })
-    {
+    if crate::steam::is_game(a) {
         return Some(Knowledge { recipe: "steam-game".into(), owner: "Steam".into(), instructions: "Open Steam Library, select this game, then Properties > Updates. Steam owns its downloads and removal. AppTide cannot independently confirm its latest build.".into(), source: "https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C".into(), evidence: "Numeric Steam application ID in the uninstall registration".into(), revision: DATABASE.revision.clone(), ..Default::default() });
     }
     if a.kind == "appx" && a.extra.get("signatureKind").and_then(|v| v.as_str()) == Some("Store") {
@@ -96,6 +90,7 @@ pub fn detect(a: &App) -> Option<Knowledge> {
 }
 pub fn enrich(c: &mut Catalog) {
     for a in c.apps.values_mut().filter(|a| a.present) {
+        crate::community::enrich(a);
         a.knowledge = detect(a);
         let stale = a.extra.get("watch").is_some_and(|w| {
             w["association"] == "bundled-recipe"

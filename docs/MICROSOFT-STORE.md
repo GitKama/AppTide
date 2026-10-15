@@ -32,3 +32,7 @@ Microsoft documents the consumer CLI and its update command in [Enhanced develop
 Local package fields are read through [Get-AppxPackageManifest](https://learn.microsoft.com/en-us/powershell/module/appx/get-appxpackagemanifest) and [FileVersionInfo.ProductVersion](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.fileversioninfo.productversion).
 
 Real inventory and read-only Store checks were exercised privately. Update dispatch, confirmation, version verification and failure handling are tested with synthetic operations. Actual Store installations remain a user acceptance test; they were not run against the developer's installed apps during validation.
+
+## Asynchronous updates in 0.2.6
+
+When the client returns “Updates started”, AppTide keeps a pending receipt with its baseline. Subsequent scans or Store checks verify newer installed versions. A pending batch cannot be submitted twice. Unresolved verification after 24 hours becomes a review item. Open Store Downloads for actual progress or errors. See [diagnostics](UPDATE-DIAGNOSTICS.md).

@@ -233,13 +233,18 @@ pub fn known_version(s: &str) -> bool {
 }
 pub fn actionable(a: &App) -> bool {
     a.present
+        && !crate::steam::is_game(a)
         && a.winget_id.as_deref().is_some_and(crate::winget::valid_id)
         && !a.protected
         && !a.ambiguous
 }
 pub fn eligible(a: &App) -> bool {
-    (actionable(a) && !a.excluded && known_version(&a.version) && known_version(&a.available))
-        || crate::github_update::ready(a)
+    !crate::steam::is_game(a)
+        && ((actionable(a)
+            && !a.excluded
+            && known_version(&a.version)
+            && known_version(&a.available))
+            || crate::github_update::ready(a))
 }
 pub fn classify(
     kind: &str,
@@ -257,10 +262,9 @@ pub fn classify(
     if kind == "update"
         && after.is_some_and(|a| {
             (a.version == before.available
-                || (before.winget_id.is_none()
-                    && crate::releases::compare(&a.version, &before.available)
-                        == "Matches release"))
+                || crate::releases::compare(&a.version, &before.available) == "Matches release")
                 && a.version != before.version
+                && crate::releases::compare(&before.version, &a.version) != "Matches release"
                 && !a.ambiguous
         })
     {
@@ -272,6 +276,40 @@ pub fn classify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_padding_verifies_only_a_real_version_change() {
+        let before = App {
+            version: "3.5.270.0".into(),
+            available: "3.5.283".into(),
+            winget_id: Some("Microsoft.GameInput".into()),
+            ..Default::default()
+        };
+        let after = App {
+            version: "3.5.283.0".into(),
+            ..before.clone()
+        };
+        assert_eq!(
+            classify("update", &before, Some(&after), 0, true),
+            "verified"
+        );
+        assert_eq!(
+            classify("update", &before, Some(&before), 0, true),
+            "unverified"
+        );
+        assert_eq!(
+            classify(
+                "update",
+                &before,
+                Some(&App {
+                    version: "3.5.283-preview".into(),
+                    ..after
+                }),
+                0,
+                true
+            ),
+            "unverified"
+        );
+    }
     #[test]
     fn friendly_publisher_does_not_change_package_identity() {
         let mut c = Catalog::default();

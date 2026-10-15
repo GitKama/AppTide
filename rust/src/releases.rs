@@ -21,22 +21,41 @@ pub fn normalize_repository(s: &str) -> String {
         .to_string()
 }
 pub fn repository(a: &App) -> Option<&str> {
-    if a.extra.get("watchDisabled") == Some(&json!(true)) {
+    if a.extra.get("watchDisabled") == Some(&json!(true))
+        || a.extra.get("githubAssociationConflict") == Some(&json!(true))
+    {
         return None;
     }
     a.extra
         .get("watch")
-        .filter(|w| w["association"] != "bundled-recipe")
+        .filter(|w| {
+            !["bundled-recipe", "public-catalogue"]
+                .contains(&w["association"].as_str().unwrap_or(""))
+        })
         .and_then(|w| w["repository"].as_str())
-        .or_else(|| a.knowledge.as_ref().map(|k| k.repository.as_str()))
         .filter(|s| valid_repository(s))
+        .or_else(|| {
+            a.knowledge
+                .as_ref()
+                .map(|k| k.repository.as_str())
+                .filter(|s| valid_repository(s))
+        })
+        .or_else(|| {
+            a.extra
+                .get("community")
+                .and_then(|v| v["repository"].as_str())
+                .filter(|s| valid_repository(s))
+        })
 }
 pub fn detect(a: &mut App) {
-    if a.extra.get("watchDisabled") == Some(&json!(true))
-        || (repository(a).is_some()
-            && a.extra
-                .get("watch")
-                .is_none_or(|w| w["association"] != "installed-metadata"))
+    a.extra.remove("githubAssociationConflict");
+    if crate::steam::is_game(a) || a.extra.get("watchDisabled") == Some(&json!(true)) {
+        return;
+    }
+    let automatic = ["installed-metadata", "bundled-recipe", "public-catalogue"];
+    if a.extra
+        .get("watch")
+        .is_some_and(|w| !automatic.contains(&w["association"].as_str().unwrap_or("")))
     {
         return;
     }
@@ -50,27 +69,47 @@ pub fn detect(a: &mut App) {
             valid_repository(&r).then_some(r)
         })
         .collect();
-    if repos.len() == 1
-        && a.extra
-            .get("watch")
-            .is_some_and(|w| w["repository"].as_str() == repos.first().map(String::as_str))
+    let detected = if repos.len() == 1 {
+        Some((repos.first().unwrap().clone(), "installed-metadata"))
+    } else if repos.len() > 1 {
+        a.extra
+            .insert("githubAssociationConflict".into(), true.into());
+        None
+    } else {
+        a.knowledge
+            .as_ref()
+            .map(|k| k.repository.as_str())
+            .filter(|r| valid_repository(r))
+            .map(|r| (r.to_string(), "bundled-recipe"))
+            .or_else(|| {
+                a.extra
+                    .get("community")
+                    .and_then(|v| v["repository"].as_str())
+                    .filter(|r| valid_repository(r))
+                    .map(|r| (r.to_string(), "public-catalogue"))
+            })
+    };
+    if let Some((repo, association)) = &detected
+        && let Some(w) = a.extra.get_mut("watch")
+        && w["repository"] == repo.as_str()
     {
+        w["association"] = (*association).into();
         return;
     }
-    if a.extra
-        .get("watch")
-        .is_some_and(|w| w["association"] == "installed-metadata")
-    {
-        a.extra.remove("watch");
+    if a.extra.remove("watch").is_some() {
         a.extra.remove("githubAutomaticConsent");
         a.extra.remove("githubAssetId");
         a.auto_update = false;
     }
-    if repos.len() == 1 {
-        a.extra.insert("watch".into(),json!({"repository":repos.first().unwrap(),"association":"installed-metadata","status":"Not checked"}));
+    if let Some((repo, association)) = detected {
+        a.extra.insert(
+            "watch".into(),
+            json!({"repository":repo,"association":association,"status":"Not checked"}),
+        );
     }
 }
 pub fn set_watch(a: &mut App, repo: &str) -> Result<()> {
+    a.extra.remove("githubAssociationConflict");
     let normalized = normalize_repository(repo);
     let repo = normalized.as_str();
     if repo.is_empty() {
@@ -192,6 +231,35 @@ pub fn newer(a: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_catalogue_respects_installed_sources_conflicts_and_manual_choices() {
+        let mut a = App {
+            kind: "registry".into(),
+            extra: [
+                ("community".into(), json!({"repository":"catalog/project"})),
+                (
+                    "urlInfoAbout".into(),
+                    json!("https://github.com/installed/project"),
+                ),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        detect(&mut a);
+        assert_eq!(repository(&a), Some("installed/project"));
+        a.extra.insert(
+            "urlUpdateInfo".into(),
+            json!("https://github.com/conflicting/project"),
+        );
+        detect(&mut a);
+        assert_eq!(repository(&a), None);
+        set_watch(&mut a, "my/project").unwrap();
+        detect(&mut a);
+        assert_eq!(repository(&a), Some("my/project"));
+        set_watch(&mut a, "").unwrap();
+        detect(&mut a);
+        assert_eq!(repository(&a), None);
+    }
     #[test]
     fn detection_uses_exact_metadata_and_preserves_cache_and_overrides() {
         let mut a = App::default();

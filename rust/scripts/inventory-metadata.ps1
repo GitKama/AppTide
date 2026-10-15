@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $registry = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RegistryJson)))
 $results = [Collections.Generic.List[object]]::new()
 function Normalize-Product([string]$Value) {
-    (($Value.ToLowerInvariant() -replace '\s*\((x64|x86|64-bit|32-bit)\)', '') -replace '\s+\d+(\.\d+)+(\s.*)?$', '').Trim()
+    (($Value.ToLowerInvariant() -replace '\s*\((x64|x86|64-bit|32-bit)\)', '') -replace '\s+\d+(\.\d+)+(\s.*)?$', '') -replace '[^\p{L}\p{Nd}]',''
 }
 function Test-LocalPath([string]$Path) {
     if ($Path -notmatch '^[A-Za-z]:\\') { return $false }
@@ -21,15 +21,37 @@ foreach ($a in $registry) {
     # The registration's icon is a hint, not sufficient identity by itself.
     # Only accept an EXE with a product name matching this registration.
     $candidates = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    if ($a.key -match ':Steam App \d+$') { continue } # Steam build IDs come from its own manifest.
     $icon = [Environment]::ExpandEnvironmentVariables([string]$a.displayIcon).Trim()
-    if ($icon -match '^"([^"]+\.exe)"(?:\s*,\s*-?\d+)?$') { $icon = $Matches[1] }
-    elseif ($icon -match '^([^"\r\n]+\.exe)(?:\s*,\s*-?\d+)?$') { $icon = $Matches[1] }
+    if ($icon -match '^"([^"]+\.(?:exe|ico))"(?:\s*,\s*-?\d+)?$') { $icon = $Matches[1] }
+    elseif ($icon -match '^([^"\r\n]+\.(?:exe|ico))(?:\s*,\s*-?\d+)?$') { $icon = $Matches[1] }
     else { $icon = '' }
-    if ($icon -match '^[A-Za-z]:\\' -and [IO.File]::Exists($icon)) { [void]$candidates.Add($icon) }
+    if ($icon -match '^[A-Za-z]:\\' -and [IO.File]::Exists($icon) -and (Test-LocalPath $icon)) {
+        if ([IO.Path]::GetExtension($icon) -eq '.exe') { [void]$candidates.Add($icon) }
+        [void]$directories.Add([IO.Path]::GetDirectoryName($icon))
+    }
+    # Parse only a literal EXE path to locate product metadata. Never execute this command.
+    $uninstall=[Environment]::ExpandEnvironmentVariables([string]$a.uninstallHint).Trim()
+    $hint=''
+    if ($uninstall -match '^"([^"\r\n]+\.exe)"(?:\s|$)') { $hint=$Matches[1] }
+    elseif ($uninstall -match '^([A-Za-z]:\\[^"\r\n]+?\.exe)(?:\s|$)') { $hint=$Matches[1] }
+    if ($hint -and (Test-LocalPath $hint)) {
+        $parent=[IO.Path]::GetDirectoryName($hint)
+        if ([IO.Path]::GetFileName($parent) -match '^(setup|uninstall)$') { $parent=[IO.Path]::GetDirectoryName($parent) }
+        [void]$directories.Add($parent)
+    }
     $location = [Environment]::ExpandEnvironmentVariables([string]$a.location).Trim().Trim('"')
     if ($location -match '^[A-Za-z]:\\.+' -and [IO.Directory]::Exists($location) -and (Test-LocalPath $location)) {
-        # Only the registered directory, no recursion or guessed installation folders.
-        @(Get-ChildItem -LiteralPath $location -Filter '*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 40) | ForEach-Object { [void]$candidates.Add($_.FullName) }
+        [void]$directories.Add($location)
+    }
+    foreach ($directory in @($directories)) {
+        # Bounded, one-level search below registration hints; no disk-wide scan.
+        if ($directory -eq [IO.Path]::GetPathRoot($directory) -or $directory -match '\\(Windows|System32|SysWOW64|Program Files(?: \(x86\))?)$' -or -not (Test-LocalPath $directory)) { continue }
+        $scan=@($directory)+@(Get-ChildItem -LiteralPath $directory -Directory -ErrorAction SilentlyContinue | Where-Object {($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0} | Select-Object -First 12 -ExpandProperty FullName)
+        foreach ($dir in $scan) {
+            @(Get-ChildItem -LiteralPath $dir -Filter '*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 40) | ForEach-Object { [void]$candidates.Add($_.FullName) }
+        }
     }
     $matching = [Collections.Generic.List[object]]::new()
     foreach ($candidate in $candidates) { try {
@@ -42,10 +64,25 @@ foreach ($a in $registry) {
         }
         if ($linked) { continue }
         $v = [Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
-        if (-not $v.ProductName -or (Normalize-Product $v.ProductName) -ne (Normalize-Product $a.name)) { continue }
+        $productMatches=$v.ProductName -and (Normalize-Product $v.ProductName) -eq (Normalize-Product $a.name)
+        # Some applications omit ProductName. A matching executable basename plus
+        # the separately registered vendor can corroborate identity in that case.
+        if (-not $v.ProductName -and $a.publisher -and $v.CompanyName) {
+            $base=$file.BaseName -replace '[-_](i386|x86_64(?:-SSE4-AVX2)?|x64|x86|arm64)$',''
+            $productMatches=(Normalize-Product $base) -eq (Normalize-Product $a.name)
+        }
+        if (-not $productMatches) { continue }
+        if ($a.publisher -and $v.CompanyName) {
+            $registered=($a.publisher.ToLowerInvariant() -replace '\b(incorporated|inc|corporation|corp|limited|ltd|llc|gmbh)\b','') -replace '[^\p{L}\p{Nd}]',''
+            $company=($v.CompanyName.ToLowerInvariant() -replace '\b(incorporated|inc|corporation|corp|limited|ltd|llc|gmbh)\b','') -replace '[^\p{L}\p{Nd}]',''
+            if ($registered -ne $company) { continue }
+        }
         $version=[string]$v.ProductVersion; $source='Executable ProductVersion'
         if (-not $version) { $version=[string]$v.FileVersion; $source='Executable FileVersion' }
+        $version=$version.Trim()
+        if ($version -match '^\d+(\s*,\s*\d+){1,3}$') { $version=$version -replace '\s*,\s*','.' }
         $matching.Add(@{key=$a.key; publisher=[string]$v.CompanyName; version=$version; versionSource=$source; metadataFile=$file.FullName})
+        if ($candidate -eq $icon) { break } # Exact registered executable outranks directory fallback.
     } catch { continue } }
     # Multiple launchers are acceptable only when their product metadata agrees.
     if ($matching.Count -gt 0 -and @($matching | ForEach-Object { $_.publisher + '|' + $_.version } | Select-Object -Unique).Count -eq 1) {

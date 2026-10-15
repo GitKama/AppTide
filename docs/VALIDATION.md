@@ -1,5 +1,14 @@
 # AppTide validation
 
+## Rust 0.2.6-beta.1
+
+- 76 default Rust tests passed; three opt-in download/installer tests remain ignored. Formatting, Clippy with warnings denied and the optimized Windows x64 build passed.
+- New regressions cover public catalogue identity and publisher checks, project conflicts and manual overrides, Steam manifest parsing and URI validation, numeric zero-padding verification, recovered-version duplicate suppression, interactive retry arguments, and asynchronous Store completion with duplicate-submission blocking. Existing queue and UI interaction regressions still pass.
+- The release binary completed a read-only scan against a separate private catalogue copy. Steam manifests supplied build IDs; executable metadata recovered missing desktop versions; public metadata added GitHub associations; equivalent/current targets were removed from update offers. The original live catalogue was not edited.
+- Native demo screenshots were checked at 1440x900 and 1040x700 for the Steam library and public directory. Search ranking was corrected and the final captures rechecked. The UI detector reported no findings. Public screenshots contain synthetic inventory only.
+- The public catalogue contains 15,645 WinGet IDs plus 4,109 Scoop records, with 2,755 distinct GitHub repositories after case folding. Source revisions, download hashes and upstream licences are preserved. Python helper syntax checks passed.
+- No real third-party installation, removal, forced Steam update or security bypass was performed. Store completion and installer retries were regression-tested with synthetic operations; upstream download and uninstall failures still require their documented recovery actions.
+
 ## Rust 0.2.5-beta.1
 
 - 66 default Rust tests, 25 legacy tests, formatting, Clippy with warnings denied and the optimized Windows x64 build passed. Three opt-in tests are skipped by default; the new public-download and synthetic-launcher tests were explicitly run and passed.

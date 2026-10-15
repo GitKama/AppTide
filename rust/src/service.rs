@@ -16,6 +16,7 @@ use std::{
 #[derive(Clone)]
 pub struct Plan {
     pub kind: String,
+    pub interactive: bool,
     pub apps: Vec<App>,
     pub created: Instant,
 }
@@ -106,6 +107,8 @@ impl Service {
                 .cloned(),
         );
         self.warnings.clear();
+        self.warnings.extend(crate::steam::enrich(&mut native));
+        self.recheck_store_pending(&native);
         let (rows, rejected, complete) = match winget::list() {
             Ok((r, n)) => (r, n, true),
             Err(e) => {
@@ -128,7 +131,44 @@ impl Service {
         self.save()?;
         Ok(complete)
     }
+    pub fn refresh_sources(&mut self) -> Result<()> {
+        if !self.demo {
+            let out = winget::run(
+                "winget.exe",
+                &[
+                    "source",
+                    "update",
+                    "--name",
+                    "winget",
+                    "--disable-interactivity",
+                ]
+                .map(String::from),
+                Some(std::time::Duration::from_secs(120)),
+            )?;
+            let message = format!(
+                "Exit {} (0x{:08X})\n{}\n{}",
+                out.code, out.code as u32, out.stdout, out.stderr
+            );
+            self.diagnostic("source-refresh", &message);
+            if out.code != 0 {
+                return Err(format!(
+                    "WinGet source refresh failed (0x{:08X}). View local logs.",
+                    out.code as u32
+                ));
+            }
+        }
+        self.scan().map(|_| ())
+    }
     pub fn check_store(&mut self) -> Result<crate::store::Check> {
+        if !self.demo
+            && self
+                .catalog
+                .receipts
+                .iter()
+                .any(|r| r["provider"] == "Microsoft Store" && r["status"] == "pending")
+        {
+            self.recheck_store_pending(&crate::inventory::read()?);
+        }
         let result = if self.demo {
             Ok(crate::store::demo_check())
         } else {
@@ -157,6 +197,14 @@ impl Service {
         result
     }
     pub fn execute_store(&mut self, preview: crate::store::Check) -> Result<()> {
+        if self
+            .catalog
+            .receipts
+            .iter()
+            .any(|r| r["provider"] == "Microsoft Store" && r["status"] == "pending")
+        {
+            return Err("Microsoft Store is still processing the previous batch. Check Store updates to recheck installed versions, or open Store Downloads.".into());
+        }
         if self.demo {
             self.catalog.extra.insert(
                 "storeCheck".into(),
@@ -203,7 +251,7 @@ impl Service {
         );
         let file = format!("{id}.log");
         let index = self.catalog.receipts.len();
-        self.catalog.receipts.push(json!({"id":id,"name":"Microsoft Store updates","kind":"store update","provider":"Microsoft Store","status":"running","startedAt":now(),"preview":preview.updates,"logFile":file}));
+        self.catalog.receipts.push(json!({"id":id,"name":"Microsoft Store updates","kind":"store update","provider":"Microsoft Store","status":"running","startedAt":now(),"preview":preview.updates,"baseline":before.iter().filter(|a|a.kind=="appx").collect::<Vec<_>>(),"logFile":file}));
         self.save()?; // Persist intention before handing the bulk operation to Microsoft.
         let result = apply();
         let log = match &result {
@@ -232,18 +280,32 @@ impl Service {
             .is_ok_and(|o| o.code == 0 && o.stderr.trim().is_empty());
         let state = if succeeded && review == 0 {
             "verified"
+        } else if succeeded
+            && result
+                .as_ref()
+                .is_ok_and(|o| o.stdout.to_lowercase().contains("updates started"))
+        {
+            "pending"
         } else if result.as_ref().is_ok_and(|o| o.code != 0) {
             "failed"
         } else {
             "unverified"
         };
-        let detail = format!(
-            "Store operation finished: {verified} previewed apps have a verified newer installed version; {review} need review. Microsoft Store controls its batch, including dependencies. Review the output log for prompts or failures; no automatic retry."
-        );
+        let detail = if state == "pending" {
+            format!(
+                "Microsoft Store accepted the updates and is still processing them. {verified} verified; {review} waiting for a newer installed version. Check Store updates or scan again to recheck. Open Store Downloads for progress; AppTide will not start a duplicate batch."
+            )
+        } else {
+            format!(
+                "Store operation finished: {verified} previewed apps have a verified newer installed version; {review} need review. Microsoft Store controls its batch, including dependencies. Review the output log for prompts or failures; no automatic retry."
+            )
+        };
         let receipt = &mut self.catalog.receipts[index];
         receipt["status"] = state.into();
         receipt["detail"] = detail.clone().into();
-        receipt["finishedAt"] = now().into();
+        if state != "pending" {
+            receipt["finishedAt"] = now().into();
+        }
         if let Ok(out) = &result {
             receipt["exitCode"] = out.code.into();
         }
@@ -272,10 +334,42 @@ impl Service {
         self.catalog.extra.remove("storeCheck"); // Old availability is no longer actionable.
         self.save()?;
         log_result?;
-        if state == "verified" {
+        if state == "verified" || state == "pending" {
             Ok(())
         } else {
             Err(detail)
+        }
+    }
+    fn recheck_store_pending(&mut self, current: &[App]) {
+        for r in self
+            .catalog
+            .receipts
+            .iter_mut()
+            .filter(|r| r["provider"] == "Microsoft Store" && r["status"] == "pending")
+        {
+            let baseline = serde_json::from_value::<Vec<App>>(r["baseline"].clone());
+            let updates = serde_json::from_value::<Vec<crate::store::Update>>(r["preview"].clone());
+            if let (Ok(before), Ok(updates)) = (baseline, updates) {
+                let (verified, review) = crate::store::verification(&updates, &before, current);
+                r["lastCheckedAt"] = now().into();
+                if review == 0 && !updates.is_empty() {
+                    r["status"] = "verified".into();
+                    r["finishedAt"] = now().into();
+                    r["detail"]=format!("All {verified} previewed Store updates confirmed by newer installed package versions.").into();
+                } else {
+                    r["detail"]=format!("Microsoft Store batch: {verified} verified, {review} still awaiting a newer installed version. Open Store Downloads for progress or errors, then check again.").into();
+                    if r["startedAt"]
+                        .as_str()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .is_some_and(|t| {
+                            chrono::Utc::now().signed_duration_since(t).num_hours() >= 24
+                        })
+                    {
+                        r["status"] = "unverified".into();
+                        r["detail"]=format!("Store verification still incomplete after 24 hours: {verified} verified, {review} need review. Inspect Store Downloads before starting another batch.").into();
+                    }
+                }
+            }
         }
     }
     pub fn refresh_releases(&mut self, only: Option<&str>) {
@@ -582,6 +676,7 @@ impl Service {
         self.save()
     }
     pub fn execute(&mut self, plan: Plan, status: impl FnMut(&str, &Catalog)) -> Result<()> {
+        let interactive = plan.interactive;
         self.execute_with(plan, status, Self::scan, |service, kind, before| {
             if service.demo {
                 let a = service.catalog.apps.get_mut(&before.uid).unwrap();
@@ -600,7 +695,11 @@ impl Service {
             if kind == "update" && before.winget_id.is_none() {
                 return crate::github_update::install(before, &service.directory.join("downloads"));
             }
-            winget::run("winget.exe", &winget::args(kind, before)?, None)
+            winget::run(
+                "winget.exe",
+                &winget::args_mode(kind, before, interactive)?,
+                None,
+            )
         })
     }
     fn save_batch(&mut self, batch: &Value) -> Result<()> {
@@ -749,7 +848,7 @@ impl Service {
                         offer.name,
                     ]
                 } else {
-                    winget::args(&plan.kind, before)?
+                    winget::args_mode(&plan.kind, before, plan.interactive)?
                 };
                 receipt["command"] = json!(args);
                 let out = install(self, &plan.kind, before)?;
@@ -888,6 +987,7 @@ pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
     }
     Ok(Plan {
         kind: kind.into(),
+        interactive: false,
         apps,
         created: Instant::now(),
     })
@@ -1177,6 +1277,63 @@ mod tests {
             "unverified"
         );
         assert!(!service.catalog.extra.contains_key("storeCheck"));
+    }
+    #[test]
+    fn store_async_batch_waits_rechecks_and_blocks_duplicate_submission() {
+        let mut service = Service::open(PathBuf::new(), true).unwrap();
+        let mut plan = crate::store::demo_check();
+        plan.updates.truncate(1);
+        let row = &plan.updates[0];
+        let old = App {
+            key: "appx:Orchid_signed".into(),
+            kind: "appx".into(),
+            name: row.name.clone(),
+            publisher: row.publisher.clone(),
+            version: row.version.clone(),
+            extra: [
+                ("signatureKind".into(), "Store".into()),
+                ("rawPublisher".into(), "CN=Orchid".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        service
+            .execute_store_with(
+                plan.clone(),
+                |_| Ok(plan.clone()),
+                || Ok(vec![old.clone()]),
+                || {
+                    Ok(winget::Output {
+                        code: 0,
+                        stdout: "Updates started".into(),
+                        stderr: String::new(),
+                    })
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            service.catalog.receipts.last().unwrap()["status"],
+            "pending"
+        );
+        assert!(
+            service
+                .execute_store(plan)
+                .unwrap_err()
+                .contains("still processing")
+        );
+        service.recheck_store_pending(std::slice::from_ref(&old));
+        assert_eq!(
+            service.catalog.receipts.last().unwrap()["status"],
+            "pending"
+        );
+        service.recheck_store_pending(&[App {
+            version: "2026.11.0.0".into(),
+            ..old
+        }]);
+        assert_eq!(
+            service.catalog.receipts.last().unwrap()["status"],
+            "verified"
+        );
     }
     #[test]
     fn store_update_verifies_versions_and_keeps_existing_catalogue() {

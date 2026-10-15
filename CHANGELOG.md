@@ -1,5 +1,15 @@
 # Changes
 
+## 0.2.6-beta.1 — 15 October 2026
+
+- Embed a searchable metadata-only directory of 19,754 WinGet/Scoop package records and 2,755 distinct GitHub projects, with source revisions, licences and refresh scripts.
+- Associate installed apps with public records using exact WinGet identity or name/publisher evidence; preserve manual choices and reject conflicting installed project URLs.
+- Recover missing versions through bounded metadata reads using registered icon, directory and uninstaller-path hints; keep source labels and reject conflicting results.
+- Add a separate Steam library: titles, build IDs, local download state, disk use and Steam navigation. Exclude games from desktop update/removal queues.
+- Compare numeric version padding correctly and reconcile missing-version WinGet rows only with corroborated publisher evidence.
+- Track accepted Store updates as pending, recheck installed versions later and prevent duplicate batch submission.
+- Explain common package failures, add source refresh and offer reviewed interactive installer retries. Existing hash checks, exact targets and automatic-consent rules remain enforced.
+
 ## 0.2.5-beta.1 — 13 October 2026
 
 - Turn compatible GitHub release watches into verified installer updates, individually or in Update all; add a chooser for multiple Windows installers.

@@ -39,3 +39,7 @@ SHA256 verifies that the downloaded file matches GitHub's asset; it is not an Au
 The reviewed installer types come from [Meetily's Tauri bundle configuration](https://github.com/Zackriya-Solutions/meetily/blob/HEAD/frontend/src-tauri/tauri.conf.json) and [ExifToolGUI's Inno Setup source](https://github.com/FrankBijnen/ExifToolGui/blob/HEAD/Redist/ExifToolGUI_install.iss). Fixed flags follow [NSIS installer usage](https://nsis.sourceforge.io/Docs/Chapter3.html) and [Inno Setup command-line documentation](https://jrsoftware.org/ishelp/topic_setupcmdline.htm). Asset integrity fields follow [GitHub's release-assets API](https://docs.github.com/en/rest/releases/assets).
 
 Validation covers mixed queues, stale hashes, ambiguous assets, repository detection/overrides, numeric installer revisions, confirmation through the actual UI worker, a real public installer download with hash verification, and a harmless synthetic executable through the launcher. Real third-party installation compatibility remains a user acceptance-test boundary; these tests did not update or uninstall the developer's existing apps.
+
+## Public catalogue associations in 0.2.6
+
+Project discovery also uses the embedded WinGet/Scoop recognition catalogue. Installed project URLs take priority, conflicts stop automatic association, and explicit user choices remain authoritative. This does not expand automatic installer authority. See [detection and public sources](PUBLIC-CATALOGUE.md).

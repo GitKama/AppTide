@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod catalog;
+mod community;
 mod custom;
 mod diagnostics;
 mod github_update;
@@ -9,6 +10,7 @@ mod portable;
 mod releases;
 mod self_update;
 mod service;
+mod steam;
 mod store;
 mod ui;
 mod winget;
@@ -117,6 +119,12 @@ fn run() -> Result<(), String> {
             let mut app = ui::Tide::new(service, &cc.egui_ctx);
             app.screenshot = screenshot;
             app.scrolled_demo = scrolled;
+            if args.iter().any(|a| a == "--steam-preview") {
+                app.steam_preview();
+            }
+            if args.iter().any(|a| a == "--directory-preview") {
+                app.directory_preview();
+            }
             if args.iter().any(|a| a == "--github-preview") {
                 app.github_preview();
             }

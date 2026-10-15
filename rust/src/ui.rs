@@ -19,6 +19,7 @@ const TEAL: Color32 = Color32::from_rgb(7, 109, 114);
 const LINE: Color32 = Color32::from_rgb(220, 229, 237);
 enum Command {
     Scan,
+    RefreshSources,
     CheckStore,
     ApplyStore(crate::store::Check),
     Execute(Plan),
@@ -46,6 +47,8 @@ enum Event {
 enum Page {
     Updates,
     Store,
+    Steam,
+    Directory,
     Installed,
     Catalogue,
     Activity,
@@ -173,6 +176,21 @@ impl Tide {
         }
     }
     fn store_page(&mut self, ui: &mut Ui) {
+        let pending = self
+            .catalog
+            .receipts
+            .iter()
+            .rev()
+            .find(|r| r["provider"] == "Microsoft Store" && r["status"] == "pending");
+        if let Some(r) = pending {
+            ui.colored_label(TEAL, "Updates are running in Microsoft Store");
+            ui.label(
+                r["detail"]
+                    .as_str()
+                    .unwrap_or("Check again to verify installed versions."),
+            );
+        }
+        let pending = pending.is_some();
         ui.label("Check and update apps through Microsoft's installed Store client.");
         ui.label("Store updates run separately from the WinGet queue. Microsoft controls the batch and its dependencies.");
         ui.add_space(10.0);
@@ -190,6 +208,7 @@ impl Tide {
             }
             let button = ui.add_enabled(
                 !self.busy
+                    && !pending
                     && check
                         .as_ref()
                         .is_some_and(|c| c.error.is_none() && !c.updates.is_empty()),
@@ -232,6 +251,172 @@ impl Tide {
             for app in &check.updates {
                 ui.label(RichText::new(&app.name).strong());
                 ui.label(format!("{} · Installed {}", app.publisher, app.version));
+                ui.separator();
+            }
+        });
+    }
+    pub fn steam_preview(&mut self) {
+        if !self.demo {
+            return;
+        }
+        self.page = Page::Steam;
+        let a=App{uid:"demo-steam".into(),key:"steam:42".into(),name:"Harbour Expedition".into(),kind:"steam".into(),present:true,extra:[("steam".into(),serde_json::json!({"appId":"42","buildId":"20481237","sizeBytes":25_769_803_776_u64,"pendingBytes":1_048_576_000_u64,"library":"D:\\SteamLibrary","status":"Download pending in Steam"}))].into(),..Default::default()};
+        self.catalog.apps.insert(a.uid.clone(), a);
+    }
+    pub fn directory_preview(&mut self) {
+        if self.demo {
+            self.page = Page::Directory;
+            self.query = "Firefox".into();
+        }
+    }
+    fn steam_page(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Your Steam library, separate from desktop app updates.");
+            if ui.button("Open Steam Downloads").clicked() && !self.demo {
+                open_steam(None);
+            }
+        });
+        ui.label(RichText::new("Build IDs and download state come from local Steam manifests. Steam checks availability and owns installation, updates and removal.").color(MUTED));
+        ui.add_space(10.0);
+        ui.add_sized(
+            [ui.available_width(), 34.0],
+            egui::TextEdit::singleline(&mut self.query).hint_text("Find a Steam game"),
+        );
+        let query = self.query.to_lowercase();
+        let mut games: Vec<_> = self
+            .catalog
+            .apps
+            .values()
+            .filter(|a| a.present && crate::steam::is_game(a))
+            .collect();
+        games.sort_by_key(|a| a.name.to_lowercase());
+        let bytes: u64 = games
+            .iter()
+            .filter_map(|a| a.extra.get("steam").and_then(|s| s["sizeBytes"].as_u64()))
+            .sum();
+        ui.label(format!(
+            "{} Steam entries · {:.1} GiB on disk",
+            games.len(),
+            bytes as f64 / 1_073_741_824.0
+        ));
+        ui.separator();
+        games.retain(|a| a.name.to_lowercase().contains(&query));
+        if games.is_empty() {
+            ui.heading("No Steam games in this view");
+            ui.label(
+                "Scan installed software to read local Steam libraries, or change your search.",
+            );
+        }
+        egui::ScrollArea::vertical().show_rows(ui, 108.0, games.len(), |ui, range| {
+            for i in range {
+                let a = games[i];
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&a.name).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Manage in Steam").clicked() && !self.demo {
+                            open_steam(crate::steam::app_id(a).as_deref());
+                        }
+                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(TEAL, crate::steam::version_label(a));
+                    if let Some(s) = a.extra.get("steam") {
+                        ui.label(s["status"].as_str().unwrap_or("Managed by Steam"));
+                        if let Some(bytes) = s["sizeBytes"].as_u64() {
+                            ui.label(format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0));
+                        }
+                    }
+                });
+                if let Some(s) = a.extra.get("steam") {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(s["library"].as_str().unwrap_or(""))
+                                .small()
+                                .color(MUTED),
+                        )
+                        .truncate(),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new("Manifest not found; open Steam to check this installation.")
+                            .small()
+                            .color(MUTED),
+                    );
+                }
+                ui.separator();
+            }
+        });
+    }
+    fn directory_page(&mut self, ui: &mut Ui) {
+        let db = &*crate::community::DATABASE;
+        ui.label(format!(
+            "{} public package records · {} GitHub projects · Snapshot {}",
+            db.entries.len(),
+            crate::community::repositories(),
+            db.generated
+        ));
+        ui.label(RichText::new("Recognition data from WinGet and Scoop. Entries can describe editions, tools or portable builds. Your installed versions come from this PC.").color(MUTED));
+        ui.add_space(10.0);
+        ui.add_sized(
+            [ui.available_width(), 34.0],
+            egui::TextEdit::singleline(&mut self.query)
+                .hint_text("Search the public directory by name, publisher or GitHub project"),
+        );
+        let q = self.query.to_lowercase();
+        let mut entries: Vec<_> = db
+            .entries
+            .iter()
+            .filter(|e| {
+                q.is_empty()
+                    || e.names.iter().any(|s| s.to_lowercase().contains(&q))
+                    || e.publishers.iter().any(|s| s.to_lowercase().contains(&q))
+                    || e.repository.to_lowercase().contains(&q)
+            })
+            .collect();
+        entries.sort_by_cached_key(|e| {
+            let exact =
+                e.id.rsplit(['.', '/'])
+                    .next()
+                    .is_some_and(|s| s.eq_ignore_ascii_case(&q))
+                    || e.names.iter().any(|s| s.eq_ignore_ascii_case(&q));
+            let product = e
+                .names
+                .iter()
+                .any(|s| s.to_lowercase().ends_with(&format!(" {q}")));
+            let named = e.names.iter().any(|s| s.to_lowercase().contains(&q));
+            (
+                if exact {
+                    0
+                } else if product {
+                    1
+                } else if named {
+                    2
+                } else {
+                    3
+                },
+                e.id.len(),
+                e.id.to_lowercase(),
+            )
+        });
+        ui.label(format!("{} matching records", entries.len()));
+        ui.separator();
+        egui::ScrollArea::vertical().show_rows(ui, 100.0, entries.len(), |ui, range| {
+            for i in range {
+                let e = entries[i];
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(e.names.first().unwrap_or(&e.id)).strong());
+                    ui.label(RichText::new(&e.source).small().color(MUTED));
+                    if !e.repository.is_empty() && ui.link("GitHub project").clicked() {
+                        open_url(&format!("https://github.com/{}", e.repository));
+                    }
+                    if e.homepage.starts_with("https://") && ui.link("Website").clicked() {
+                        open_url(&e.homepage);
+                    }
+                });
+                ui.add(egui::Label::new(&e.id).truncate());
+                ui.add(
+                    egui::Label::new(RichText::new(&e.description).small().color(MUTED)).truncate(),
+                );
                 ui.separator();
             }
         });
@@ -335,6 +520,7 @@ impl Tide {
                 let operation = match &command {
                     Command::Scan => "scan",
                     Command::CheckStore => "Store check",
+                    Command::RefreshSources => "Refresh WinGet sources",
                     Command::ApplyStore(_) => "Store updates",
                     Command::Execute(_) => "manual queue",
                     Command::Automatic => "automatic queue",
@@ -353,6 +539,7 @@ impl Tide {
                         })
                     }
                     Command::CheckStore => service.check_store().map(|_| ()),
+                    Command::RefreshSources => service.refresh_sources(),
                     Command::ApplyStore(preview) => service.execute_store(preview),
                     Command::Execute(plan) => service.execute(plan, |phase, cat| {
                         let _ =
@@ -544,8 +731,10 @@ impl Tide {
         for (page, label) in [
             (Page::Updates, format!("Updates                 {count}")),
             (Page::Store, "Microsoft Store".into()),
+            (Page::Steam, "Steam library".into()),
             (Page::Installed, "Installed apps".into()),
             (Page::Catalogue, "My catalogue".into()),
+            (Page::Directory, "App directory".into()),
             (Page::Activity, "Activity".into()),
             (Page::Settings, "Settings".into()),
         ] {
@@ -558,7 +747,7 @@ impl Tide {
                         NAV
                     })
                     .stroke(Stroke::NONE);
-            if ui.add_sized([170.0, 43.0], b).clicked() {
+            if ui.add_sized([170.0, 38.0], b).clicked() {
                 self.page = page;
                 self.query.clear();
             }
@@ -605,14 +794,7 @@ impl Tide {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Installed").color(MUTED));
-            ui.label(
-                RichText::new(if a.version.trim().is_empty() {
-                    "Version not reported"
-                } else {
-                    &a.version
-                })
-                .strong(),
-            );
+            ui.label(RichText::new(crate::steam::version_label(&a)).strong());
         });
         if !a.available.is_empty() {
             ui.horizontal(|ui| {
@@ -695,10 +877,17 @@ impl Tide {
             self.details_reset = false;
         }
         scroll.show(ui,|ui|{
+            if let Some(r)=self.catalog.receipts.iter().rev().find(|r|r["appId"]==a.uid) && ["failed","unverified"].contains(&r["status"].as_str().unwrap_or("")) {
+                ui.colored_label(Color32::from_rgb(150,80,10),"Last update needs attention");
+                ui.label(r["exitCode"].as_i64().and_then(|c|crate::winget::failure_hint(c as i32)).unwrap_or_else(||r["detail"].as_str().unwrap_or("Open Activity for details.")));
+                if ui.link("View update history and logs").clicked(){self.page=Page::Activity;}
+                ui.separator();
+            }
             let mut automatic=a.auto_update && a.extra.get("automaticConsent")==Some(&serde_json::json!(2)) && (actionable(&a) || crate::github_update::automatic_allowed(&a));
             if ui.add_enabled(!self.busy && (actionable(&a) || crate::github_update::consent_key(&a).is_some()),egui::Checkbox::new(&mut automatic,"Allow automatic updates")).changed(){self.send(Command::AutoPreference(Some(a.uid.clone()),automatic),"Saving automatic update choice…");}
             ui.label(RichText::new("Also requires the global switch in Settings.").small().color(MUTED));
             ui.add_space(12.0);ui.label(RichText::new("GitHub updates").strong());
+            if let Some(c)=a.extra.get("community") {field(ui,"Public catalogue match",c["id"].as_str().unwrap_or(""));field(ui,"Match evidence",c["evidence"].as_str().unwrap_or(""));}
             if self.watch_app!=a.uid {self.watch_app=a.uid.clone();self.watch_input=crate::releases::repository(&a).unwrap_or("").into();}
             ui.add_sized([ui.available_width(),32.0],egui::TextEdit::singleline(&mut self.watch_input).hint_text("owner/repository"));
             ui.horizontal(|ui|{
@@ -715,7 +904,7 @@ impl Tide {
                 if let Some(o)=chosen {field(ui,"Installer",&o.name);field(ui,"Installer version",&o.version);ui.label(RichText::new(if o.mode=="interactive" || o.mode=="msi" {"Windows setup may ask you to finish installation."}else{"Reviewed installer: supports unattended updates."}).small().color(MUTED));}
             } else if a.winget_id.is_some() {ui.label("WinGet is the preferred update route for this app.");}
             else if a.extra.get("watch").is_some_and(|w|w["assets"].is_array()) {ui.label("No compatible installer with a GitHub SHA256 digest. Open releases to review other formats.");}
-            if let Some(w)=a.extra.get("watch") {if let Some(e)=w["error"].as_str(){ui.label(e);}field(ui,"Project detected from",w["association"].as_str().map(|s|match s{"installed-metadata"=>"Installed app metadata","bundled-recipe"=>"Reviewed product recipe",_=>"Your project choice"}).unwrap_or("Not connected"));field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
+            if let Some(w)=a.extra.get("watch") {if let Some(e)=w["error"].as_str(){ui.label(e);}field(ui,"Project detected from",w["association"].as_str().map(|s|match s{"installed-metadata"=>"Installed app metadata","bundled-recipe"=>"Reviewed product recipe","public-catalogue"=>"Public catalogue identity",_=>"Your project choice"}).unwrap_or("Not connected"));field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
                 if let Some(t)=w["checkedAt"].as_str(){field(ui,"Last successful check",t);}}
             if let Some(repo)=crate::releases::repository(&a) && ui.link("Open project releases").clicked(){open_url(&format!("https://github.com/{repo}/releases"));}
 
@@ -724,6 +913,7 @@ impl Tide {
                 field(ui,"Vendor source",sources["publisher"].as_str().unwrap_or("Not reported"));
                 field(ui,"Version source",sources["version"].as_str().unwrap_or("Not reported"));
             }
+            if let Some(note)=a.extra.get("versionComparison").and_then(|v|v.as_str()){ui.label(note);}
             if let Some(arch)=a.extra.get("architecture").and_then(|v|v.as_str()){field(ui,"Architecture",arch);}
             if ui.add_enabled(!self.busy,egui::Button::new("Edit my catalogue entry")).clicked(){
                 self.source_editor=Some(SourceEditor{id:Some(a.uid.clone()),manual:a.kind=="manual",name:a.name.clone(),source:crate::custom::get(&a).unwrap_or_else(||crate::custom::Source{manual_version:a.version.clone(),url:a.knowledge.as_ref().map(|k|k.source.clone()).unwrap_or_default(),repository:crate::releases::repository(&a).unwrap_or("").into(),..Default::default()}),error:None});
@@ -786,6 +976,7 @@ impl Tide {
             .values()
             .filter(|a| {
                 (self.page == Page::Catalogue || a.present)
+                    && !crate::steam::is_game(a)
                     && (self.page != Page::Installed || a.kind != "manual")
                     && (self.show_system || !a.protected)
                     && (self.page != Page::Updates
@@ -860,14 +1051,31 @@ impl Tide {
         if button.clicked() {
             self.show_logs();
         }
+        if ui
+            .add_enabled(!self.busy, egui::Button::new("Refresh WinGet sources"))
+            .clicked()
+        {
+            self.send(
+                Command::RefreshSources,
+                "Refreshing package metadata and checking installed apps…",
+            );
+        }
         ui.label("Logs contain app events; receipts contain installer output; batches contain queue plans and stop reasons. Keep these files private.");
         if self.catalog.receipts.is_empty() {
             ui.add_space(30.0);
             ui.heading("A history you can check.");
             ui.label("Updates and removals will appear here with their verification result.");
         }
+        let receipts: Vec<_> = self
+            .catalog
+            .receipts
+            .iter()
+            .rev()
+            .take(100)
+            .cloned()
+            .collect();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for r in self.catalog.receipts.iter().rev().take(100) {
+            for r in &receipts {
                 ui.label(RichText::new(r["name"].as_str().unwrap_or("App")).strong());
                 ui.horizontal(|ui| {
                     ui.label(r["kind"].as_str().unwrap_or(""));
@@ -882,6 +1090,33 @@ impl Tide {
                     ui.label(r["startedAt"].as_str().unwrap_or(""));
                 });
                 ui.label(r["detail"].as_str().unwrap_or(""));
+                if ["failed", "unverified"].contains(&r["status"].as_str().unwrap_or("")) {
+                    if let Some(hint) = r["exitCode"]
+                        .as_i64()
+                        .and_then(|c| crate::winget::failure_hint(c as i32))
+                    {
+                        ui.label(RichText::new(hint).color(MUTED));
+                    }
+                    if let Some(a) = r["appId"]
+                        .as_str()
+                        .and_then(|id| self.catalog.apps.get(id))
+                        .filter(|a| eligible(a))
+                    {
+                        let id = a.uid.clone();
+                        if ui
+                            .add_enabled(
+                                !self.busy,
+                                egui::Button::new("Review retry with installer prompts"),
+                            )
+                            .clicked()
+                        {
+                            self.prepare("update", vec![id]);
+                            if let Some(p) = &mut self.plan {
+                                p.interactive = true;
+                            }
+                        }
+                    }
+                }
                 if let Some(code) = r["exitCode"].as_i64() {
                     ui.label(format!(
                         "{} exit code: {code} (0x{:08X})",
@@ -999,7 +1234,7 @@ impl Tide {
             rect.max - Vec2::new(28.0, 18.0),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(content),|ui|{
-            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Store=>"Microsoft Store",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
+            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Store=>"Microsoft Store",Page::Steam=>"Steam library",Page::Directory=>"App directory",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if self.page==Page::Catalogue && ui.add_enabled(!self.busy,egui::Button::new("Add custom app")).clicked(){self.source_editor=Some(SourceEditor{id:None,manual:true,name:String::new(),source:Default::default(),error:None});}
                     if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();let button=ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(Color32::WHITE)).fill(TEAL));self.update_all_rect=Some(button.rect);if button.clicked(){self.prepare("update",ids);}}
                     if self.page!=Page::Store && ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
@@ -1027,7 +1262,7 @@ impl Tide {
                     if ui.link("Manage Store updates").clicked(){self.page=Page::Store;}
                 }); ui.add_space(8.0);
             }
-            if self.page==Page::Store {self.store_page(ui);}else if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
+            if self.page==Page::Steam {self.steam_page(ui);}else if self.page==Page::Directory {self.directory_page(ui);}else if self.page==Page::Store {self.store_page(ui);}else if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
                 let body=ui.available_rect_before_wrap();let details_width=290.0;let split=body.right()-details_width-20.0;
                 let list=Rect::from_min_max(body.min,Pos2::new(split-20.0,body.bottom()));let detail=Rect::from_min_max(Pos2::new(split+20.0,body.top()+2.0),body.max);
                 ui.painter().line_segment([Pos2::new(split,body.top()),Pos2::new(split,body.bottom())],Stroke::new(1.0,LINE));
@@ -1168,10 +1403,11 @@ impl Tide {
                 );
             }
         }
-        if let Some(plan) = self.plan.clone() {
+        if let Some(mut plan) = self.plan.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().or_else(||crate::releases::repository(a)).unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));if let Some(o)=crate::github_update::offer(a){ui.label(format!("Installer: {}",o.name));ui.label(if o.mode=="interactive" || o.mode=="msi" {"Runs Windows setup; follow any installer prompts."}else{"Runs the reviewed unattended installer. Save your work first."});}ui.separator();}});ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
+            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().or_else(||crate::releases::repository(a)).unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));if let Some(o)=crate::github_update::offer(a){ui.label(format!("Installer: {}",o.name));ui.label(if o.mode=="interactive" || o.mode=="msi" {"Runs Windows setup; follow any installer prompts."}else{"Runs the reviewed unattended installer. Save your work first."});}ui.separator();}});if plan.kind=="update" && plan.apps.iter().any(|a|a.winget_id.is_some()){ui.checkbox(&mut plan.interactive,"Show installer prompts (useful when an unattended update fails)");}ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
+            self.plan = Some(plan.clone());
             if cancel {
                 self.plan = None;
             }
@@ -1306,7 +1542,7 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
     p.text(
         Pos2::new(rect.right() - 174.0, rect.top() + 13.0),
         egui::Align2::LEFT_TOP,
-        &a.version,
+        crate::steam::version_label(a),
         FontId::proportional(12.0),
         INK,
     );
@@ -1355,6 +1591,12 @@ fn open_store() {
         let _ = std::process::Command::new("explorer.exe")
             .arg("ms-windows-store://downloadsandupdates")
             .spawn();
+    }
+}
+fn open_steam(id: Option<&str>) {
+    #[cfg(windows)]
+    if let Some(uri) = crate::steam::uri(id) {
+        let _ = std::process::Command::new("explorer.exe").arg(uri).spawn();
     }
 }
 fn open_settings() {

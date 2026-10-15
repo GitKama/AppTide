@@ -36,7 +36,7 @@ pub fn read() -> Result<Vec<App>> {
                 let key = format!("registry:{label}:{label_view}:{key}");
                 if get("DisplayVersion").trim().is_empty() || get("Publisher").trim().is_empty() {
                     hints.push(
-                        serde_json::json!({"key":key,"name":name,"displayIcon":get("DisplayIcon"),"location":get("InstallLocation")}),
+                        serde_json::json!({"key":key,"name":name,"publisher":get("Publisher"),"displayIcon":get("DisplayIcon"),"location":get("InstallLocation"),"uninstallHint":get("UninstallString")}),
                     );
                 }
                 apps.push(App {
