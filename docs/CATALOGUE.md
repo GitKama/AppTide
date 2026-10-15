@@ -1,8 +1,10 @@
 # AppTide's software knowledge
 
-## Two separate stores
+## Public sources and private observations
 
 The bundled database is `rust/data/recipes.json`: versioned JSON with reviewed public product names, exact publishers, update owners, instructions, official sources, review dates, and optional GitHub release repositories. Beta.2 introduced ten product/family recipes and two channel rules; 0.2.1 adds 7-Zip, VLC, KeePass and Notepad++ for fourteen product/family recipes plus the channel rules. Rust embeds the database in the executable, so it works without downloading a catalogue.
+
+Alongside the fourteen reviewed recipes, `rust/data/community.json` embeds 19,754 metadata-only package records from WinGet and Scoop, including 2,755 distinct GitHub projects. This searchable directory supports corroborated source associations, not arbitrary installer execution. See [provenance, licences and matching rules](PUBLIC-CATALOGUE.md).
 
 The private catalogue is `%LOCALAPPDATA%\AppTide-Beta\catalog.json`. It accumulates first/last sightings, versions, preferences, release associations, log sightings and verified/unverified operation counts. An unknown app is a **Needs research** entry, not a failure or an invitation to guess an installer. Public recipes and private observations have different authority. No inventory is uploaded and no private observation becomes a public contribution automatically.
 
@@ -17,14 +19,14 @@ The same editor can attach sources and notes to detected apps, while their detec
 ## Recognition and update routes
 
 - Registry products require an anchored product-name pattern and an exact publisher. Multiple matching recipes yield no match. Private forks with different identities are left alone.
-- Steam game ownership comes from a numeric Steam App registration. Steam manages updates; AppTide does not infer the latest game build. See [Steam's update documentation](https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C).
+- Steam ownership comes from numeric Steam registrations and local library manifests. The separate Steam library shows local build IDs and download state. Steam manages updates; AppTide does not infer the latest game build. See [Steam's update documentation](https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C).
 - AppX records require Windows `SignatureKind=Store` before being assigned to Microsoft Store. A name beginning with Microsoft is insufficient, and a Developer signature is not a Store signature. See [Microsoft's signature kinds](https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.packagesignaturekind) and [Store updates](https://support.microsoft.com/en-us/windows/apps/turn-on-automatic-app-updates).
 - Other reviewed routes include Creative Cloud, NVIDIA App, Battle.net, browser updaters and official vendor downloads. Each recipe includes its source. These routes provide instructions, not an independently verified update state.
 - Identical current-user registry registrations shared across 32/64-bit views are collapsed. Different keys, versions, publishers, locations and protection flags remain distinct. This is not universal product deduplication.
 
 ## GitHub updates
 
-Projects are detected from reviewed name/publisher recipes or unambiguous HTTPS GitHub URLs in installed registry metadata. Explicit user choices take precedence; clearing a project disables detection for that entry. Conflicting metadata stays unresolved.
+Projects are detected from unambiguous HTTPS GitHub URLs in installed metadata, reviewed name/publisher recipes, or corroborated public directory matches. Explicit user choices take precedence; clearing a project disables detection for that entry. Conflicting metadata stays unresolved.
 
 Public stable releases are checked without credentials or uploading inventory. Successful checks are cached for one hour; explicit refresh is immediate. Each scan checks at most 20 repositories; failures are recorded without abandoning the remaining repositories. Old watch-only cache records are refreshed to obtain release assets.
 

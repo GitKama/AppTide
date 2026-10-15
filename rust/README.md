@@ -3,17 +3,17 @@
 Version 0.2.7-beta.1 is the native Rust implementation alongside the Electron alpha.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
-**Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
+**Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Automated operation tests use synthetic installers/state; repeatable real-installer VM acceptance is tracked in [#3](https://github.com/GitKama/AppTide/issues/3). See [validation](../docs/VALIDATION.md).
 
 ## Build and run
 
-Windows x64, Rust 1.95 or newer, and the Microsoft C++ Build Tools with a Windows SDK:
+Windows x64, rustup with the toolchain pinned in `rust-toolchain.toml`, and the Microsoft C++ Build Tools with a Windows SDK:
 
 ```powershell
 cd rust
-cargo test
-cargo run -- --demo
-cargo build --release
+cargo test --locked
+cargo run --locked -- --demo
+cargo build --locked --release
 .\target\release\apptide-beta.exe
 ```
 
@@ -47,7 +47,7 @@ Add portable folders in Settings, then scan. Discovery reads executable metadata
 
 In My catalogue, choose **Add custom app** to track a product manually. Select any app and choose **Edit my catalogue entry** to save its official HTTPS source, GitHub project URL, version (manual entries only), and update notes. These records remain private. Stop tracking retains history and never uninstalls software.
 
-AppTide checks its own GitHub beta releases at startup; Settings also offers a manual check and opt-out. **Update AppTide and restart** verifies the release, retains the old package files and relaunches with the same private catalogue. See [self-update validation and limits](https://github.com/GitKama/AppTide/blob/main/docs/SELF-UPDATES.md).
+AppTide checks its own GitHub beta releases at startup by default and during **Check for updates**. Every page shows the result and a direct check/update control; Settings retains the startup opt-out. **Update and restart** verifies the release, retains the old package files and relaunches with the same private catalogue. See [self-update validation and limits](https://github.com/GitKama/AppTide/blob/main/docs/SELF-UPDATES.md).
 
 ## Data and migration
 

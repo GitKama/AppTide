@@ -1,6 +1,6 @@
 # Rust beta implementation decision
 
-Researched 2026-10-10. User direction: native Rust, a custom immediate-mode UI, and a beta milestone.
+Original decision researched 2026-10-10; implementation status reviewed 2026-10-15. User direction: native Rust, a custom immediate-mode UI, and a beta milestone.
 
 ## UI choice
 
@@ -28,4 +28,4 @@ The established AppTide slate/teal identity is preserved. The native beta uses a
 
 The beta opens a separate local data folder with an exclusive process lock. Alpha import is available only into an empty beta catalogue and resets automatic execution consent. Schema extensions such as saved watches are preserved. The old alpha stays runnable.
 
-Beta.2 adds opt-in updates while open, portable discovery and release-watch editing, plus [reviewed public catalogue recipes](CATALOGUE.md). This remains a beta, not a declaration of installer reliability. Real third-party update/removal behavior requires a disposable Windows test environment; synthetic success does not prove live installer behavior.
+The 0.2 series now includes a private catalogue editor, GitHub installer updates, Microsoft Store support, a public metadata directory, a separate Steam library and AppTide self-updates. See [current project status](ROADMAP.md) and [catalogue rules](CATALOGUE.md). This remains a beta, not a declaration of installer reliability. Real third-party update/removal behavior requires a disposable Windows test environment; synthetic success does not prove live installer behavior.

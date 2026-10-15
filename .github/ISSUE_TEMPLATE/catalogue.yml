@@ -1,0 +1,29 @@
+name: Catalogue or detection improvement
+description: Suggest one public product with evidence and a narrow detection rule.
+labels: [enhancement]
+body:
+  - type: input
+    id: product
+    attributes:
+      label: Product and publisher
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Official public source or GitHub project
+      description: Use the publisher/project's own source. Do not provide private download links or tokens.
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: What AppTide currently detects and what is missing
+      description: Include the AppTide version, public package ID, installation type and a sanitized example. Distinguish a missing association, missing installed version and unsupported installer.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Proposed matching evidence and success criteria
+      description: Describe how to distinguish editions, publishers, architecture and scope. A name-only match or latest public version is not proof of installed identity/version.

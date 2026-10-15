@@ -1,38 +1,39 @@
-# Roadmap
+# Project status and remaining work
 
-## 0.1 — A working foundation
+Reviewed against **0.2.7-beta.1 on 15 October 2026**. This is a status map, not a version/date promise. The linked GitHub issues contain completion criteria; completed capabilities belong in the changelog rather than an open umbrella issue.
 
-Implemented: local catalogue, Windows inventory, optional portable scanning, WinGet update/removal plans, operation verification, exclusions, opt-in updates while open, bounded log sightings, watch-only GitHub releases, desktop UI, tests, and Windows packaging.
+## Shipped
 
-## 0.2 — Reliable identity and broader discovery
+| Capability | First native release / evidence |
+| --- | --- |
+| Rust immediate-mode UI, inventory, WinGet previews, updates and removal | [0.2.0-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.1) |
+| Reviewed catalogue routes, portable discovery, opt-in updates while open | [0.2.0-beta.2](https://github.com/GitKama/AppTide/releases/tag/v0.2.0-beta.2) |
+| Private catalogue editor and verified AppTide self-updates | [0.2.1-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.1-beta.1) |
+| Persistent queue outcomes, independent failure handling and built-in log viewer | [0.2.2](https://github.com/GitKama/AppTide/releases/tag/v0.2.2-beta.1), [0.2.3](https://github.com/GitKama/AppTide/releases/tag/v0.2.3-beta.1) |
+| Richer installed metadata and Microsoft Store checks/updates | [0.2.4-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.4-beta.1) |
+| GitHub installer updates, project detection and native AppTide icon | [0.2.5-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.5-beta.1) |
+| Public app directory, Steam library, metadata fallbacks and pending Store reconciliation | [0.2.6-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.6-beta.1) |
+| Correct empty Store checks and visible AppTide update status/actions on every page | [0.2.7-beta.1](https://github.com/GitKama/AppTide/releases/tag/v0.2.7-beta.1) |
 
-Beta.2 delivered reviewed detection recipes, private learning summaries, update-owner guidance, cached stable-release watches, bounded portable discovery and opt-in updates while open. Next: a simpler private catalogue editor and structured WinGet data.
+## Beta reliability
 
-- Replace display-table parsing with a structured WinGet adapter; retain a tested CLI fallback.
-- Persist explicit aliases and product-code/architecture/scope evidence; reconcile duplicate records without merging ambiguous installations.
-- Surface suggested catalogue associations with their supporting evidence and user review.
-- Refresh saved release watches during scheduled scans with caching, rate limits, and release-channel controls.
-- Add discovery providers for selected portable manifests, Store identities, and known application-specific metadata. Keep unsupported detections visible.
-- Add catalogue backup/restore, retention settings, and schema migration tests.
+- [#1 — Structured WinGet acquisition](https://github.com/GitKama/AppTide/issues/1): replace dependency on display-table layout while retaining a conservative fallback and exact identity.
+- [#5 — Reviewed ambiguous identity associations](https://github.com/GitKama/AppTide/issues/5): review and persist unresolved mappings without merging editions, scopes or publishers.
 
-## 0.3 — Reviewed custom update recipes
+The old catalogue umbrella [#2](https://github.com/GitKama/AppTide/issues/2) is complete for its delivered catalogue/source/update scope; its unresolved identity portion is tracked separately in #5.
 
-- Versioned recipe schema: publisher identity, version discovery, architecture/scope, release channel, immutable download URL, SHA-256 and signature policy, silent install/uninstall arguments, and verification rule.
-- Start with explicitly reviewed GitHub Releases and official vendor feeds. Do not execute arbitrary search results or scripts from logs.
-- Separate local private catalogue metadata from sanitized, opt-in community recipe contributions.
-- Recipe CI in disposable Windows environments, including wrong-architecture, signature mismatch, installation failure, restart-required, and uninstall tests.
-- Add install-new-software browsing with clear publisher and source provenance.
+## Stable-release gate
 
-## 0.4 — Unattended maintenance
+[#3 — Disposable Windows acceptance matrix](https://github.com/GitKama/AppTide/issues/3) tracks actual installer/update/removal, UAC, reboot, failure and self-update acceptance evidence. Passing synthetic tests and successful use on one PC do not establish this matrix.
 
-- Explicit opt-in Windows scheduled task, visible status, uninstall/disable flow, and documented execution context.
-- Maintenance windows, running-app detection, deferrals, metered-network handling, and reboot coordination.
-- Avoid elevating the full UI; narrow any privileged helper to validated operations.
-- Signed releases, update-channel policy, and a verifiable AppTide self-update path.
+Stable readiness also needs a supported Windows/locale matrix, keyboard/screen-reader validation, independent trust-boundary review, a private security-reporting channel and a release signing/health-check policy. These are release criteria, not claims that they are implemented.
 
-## Acceptance before calling it stable
+## Deferred
 
-- Disposable-VM end-to-end tests with real installers, updates, removals, UAC, failure, and reboot cases.
-- Independent review of provider trust boundaries, privilege handling, and update integrity.
-- Supported Windows versions and locales validated; accessibility and keyboard-only workflows tested.
-- Clear distinction between detected, supported, source-verified, and operation-verified software.
+[#4 — Updates while AppTide is closed](https://github.com/GitKama/AppTide/issues/4) is optional future work, labelled deferred and excluded from the active reliability milestone. Hourly checks while the app is open already exist. No background task will be installed without explicit opt-in.
+
+Install-new-software browsing, portable archive replacement, catalogue export/restore/retention controls and additional vendor execution recipes are possible future work, without assigned versions or delivery dates. Public metadata coverage does not imply executable support for every record.
+
+## Keeping this current
+
+Review affected issues with every behavior change. Close completed work with source/release evidence; split only concrete unfinished requirements. Update this page, [validation](VALIDATION.md) and the [release checklist](RELEASING.md) together. Preserve historical issues, tags and releases.

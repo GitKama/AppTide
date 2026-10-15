@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting and private logs
+    url: https://github.com/GitKama/AppTide/blob/main/docs/TROUBLESHOOTING.md
+    about: Check known failure patterns before reporting; keep raw logs private.
+  - name: Security reporting policy
+    url: https://github.com/GitKama/AppTide/blob/main/SECURITY.md
+    about: Do not disclose vulnerabilities in a public issue.

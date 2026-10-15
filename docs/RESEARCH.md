@@ -1,6 +1,6 @@
 # Research and design decisions
 
-Reviewed 10 October 2026 against upstream documentation and repository descriptions. AppTide is an original implementation; no upstream application source was copied into this project.
+Historical design research, reviewed 10 October 2026 against upstream documentation and repository descriptions. AppTide is an original implementation; no upstream application source was copied into this project.
 
 | Project | Licence / scope | Useful lesson | AppTide decision |
 | --- | --- | --- | --- |
@@ -24,4 +24,4 @@ There is no Windows-wide universal update protocol. Discovery can become broad; 
 
 AppTide therefore treats an observed application, a possible update source, an approved executable recipe, and a verified operation as different things. This allows the catalogue to grow without silently widening what may execute.
 
-For the first alpha, WinGet source-restricted CLI output is parsed conservatively because it is already installed on the target machine. No extra WinGet PowerShell module is installed. A structured COM/PowerShell provider is the next reliability improvement; CLI display parsing is explicitly an alpha boundary.
+For the first alpha, WinGet source-restricted CLI output is parsed conservatively because it is already installed on the target machine. No extra WinGet PowerShell module is installed. A structured COM/PowerShell provider is the next reliability improvement; CLI display parsing remains a beta limitation tracked in [#1](https://github.com/GitKama/AppTide/issues/1). See [current architecture](ARCHITECTURE.md) for the implemented providers.

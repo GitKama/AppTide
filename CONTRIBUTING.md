@@ -20,3 +20,9 @@ Keep provider changes narrowly scoped. Add fixtures for locale, truncation, ambi
 All examples, screenshots, and fixtures in pull requests must be synthetic or explicitly sanitized. Never attach your raw catalogue, registry inventory, credentials, or installer logs to a public issue.
 
 For new providers, first implement discovery and a watch-only preview. Execution support requires a documented trust model, exact identities, integrity checks, and tests using disposable Windows environments.
+
+## Issues and documentation
+
+Use the [issue forms](https://github.com/GitKama/AppTide/issues/new/choose) for a reproducible bug, one product’s catalogue evidence or a focused feature. Include the current version, expected/actual behavior and only sanitized excerpts. Check the [status map](docs/ROADMAP.md) first.
+
+Update the affected docs and issue criteria when behavior changes. Link completion evidence; keep unfinished criteria open rather than closing a broad issue without explanation. Run `python scripts/check-docs.py` from the repository root for documentation changes. It uses Python 3.11+ standard libraries and runs in CI. No application rebuild is needed for prose-only maintenance.

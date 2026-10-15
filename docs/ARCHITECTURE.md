@@ -1,48 +1,58 @@
-# Architecture
+# Native Rust architecture
 
-The architecture below describes the Electron alpha. The native implementation lives in `rust/`: `service.rs` owns a serialized worker, `catalog.rs` owns schema-compatible persistence, `inventory.rs` reads Windows inventory, `winget.rs` constructs and runs exact commands, and `ui.rs` draws the custom immediate-mode interface. See [Rust beta decisions and scope](RUST-BETA.md).
+This describes the active 0.2.x Rust beta. The original Electron implementation remains in the [0.1.1 alpha tag](https://github.com/GitKama/AppTide/tree/v0.1.1-alpha); its renderer/IPC model does not describe the native app.
+
+## Data and operations
 
 ```text
-Windows registry + current-user AppX + selected portable folders
+Registry + AppX + selected portable folders + Steam manifests
                             |
                        observations
                             v
-WinGet list ----------> local catalogue <---------- bounded log sightings
+WinGet CLI ----------> private catalogue <---------- bounded log sightings
                             ^
-                    user-added release watches
+                 reviewed recipes + public metadata
                             |
-                     operation preview
+                preview and fresh provider preflight
                             v
-                 fresh inventory / WinGet preflight
+             serialized WinGet / GitHub operation queue
                             v
-                 exact ID + version operation queue
+                   fresh installed-state check
                             v
-                   fresh post-operation scan
-                            v
-               verified / failed / unverified receipt
+                verified / failed / unverified receipt
+
+Microsoft Store: separate reviewed batch -> Store client -> pending / verification
+AppTide itself: GitHub release -> verified package -> replace / restart / rollback
+Steam: overview and handoff to the Steam client; no AppTide game updater
 ```
 
-`core/service.cjs` owns orchestration and mutation serialization. `core/catalog.cjs` manages atomic JSON persistence with a previous-file backup. `core/winget.cjs` owns parsing and argument construction. `scripts/inventory.ps1` only reads local software records and executable metadata. `desktop/main.cjs` exposes a fixed IPC API to an isolated, sandboxed renderer.
+| Module | Responsibility |
+| --- | --- |
+| [`ui.rs`](../rust/src/ui.rs) | egui layout, user previews, worker messages and visible progress; no web renderer |
+| [`service.rs`](../rust/src/service.rs) | Serialized operations, fresh scans, consent, cancellation, receipts and pending Store reconciliation |
+| [`catalog.rs`](../rust/src/catalog.rs) | Private records, identity/history, version comparison and atomic persistence |
+| [`inventory.rs`](../rust/src/inventory.rs), [`portable.rs`](../rust/src/portable.rs) | Registry/AppX and bounded executable metadata discovery |
+| [`winget.rs`](../rust/src/winget.rs) | Conservative display parsing, exact argument arrays and failure/queue-stop classification |
+| [`knowledge.rs`](../rust/src/knowledge.rs), [`community.rs`](../rust/src/community.rs), [`releases.rs`](../rust/src/releases.rs) | Reviewed recognition, metadata directory matching and cached GitHub associations |
+| [`github_update.rs`](../rust/src/github_update.rs) | Compatible installer selection, digest/size checks and execution policy |
+| [`store.rs`](../rust/src/store.rs), [`steam.rs`](../rust/src/steam.rs) | Store CLI checks and identity verification; local Steam manifest inventory |
+| [`self_update.rs`](../rust/src/self_update.rs) | AppTide release selection, package staging, helper handoff and rollback |
+| [`diagnostics.rs`](../rust/src/diagnostics.rs) | Bounded local events and log reading |
 
 ## Trust boundaries
 
-1. Renderer text is escaped and cannot run Node.js. CSP blocks network access in the renderer.
-2. IPC accepts only the application main frame. Operations are constructed in the main process from current catalogue identities, never from renderer-supplied commands.
-3. A preview token is single-use and expires after ten minutes. Native confirmation names actual packages before a user-requested operation.
-4. Preflight rejects stale versions, changed targets, ambiguous entries, exclusions, and protected components.
-5. Child processes use argument arrays without a shell. Registry uninstall strings, log lines, and URLs never become commands.
-6. No force, reboot, purge, hash-bypass, or security-bypass switches are added. No EULA is automatically accepted.
-7. Exit zero is not verification. Updates require observing the requested version; removals require a successful scan showing absence. Failed/incomplete scans produce uncertainty.
-8. Automatic updates are confined to explicitly allowed apps while the app is open; uncertain receipts block unattended retries.
+1. The native UI sends typed worker commands. Previews retain identities and target versions and expire after ten minutes; fresh preflight rejects changed or ambiguous targets.
+2. Child processes receive argument arrays. Registry uninstall strings, public metadata and log text never become shell commands.
+3. WinGet uses exact IDs and reviewed versions. GitHub updates additionally bind the preview to compatible assets and integrity metadata; Store batches have their own fresh preview and verification rules.
+4. Independent package failures do not abandon unrelated updates. Cancellation, reboot/shared installer signals, failed verification scans and persistence failures can stop the queue. See [diagnostics](UPDATE-DIAGNOSTICS.md).
+5. Exit zero alone is not verification. Updates need fresh installed-state evidence; removal needs a successful scan confirming absence. Store acceptance may remain pending.
+6. Automatic execution requires global and per-app consent while AppTide is open. Failed/uncertain operations block unattended retries. There is no installed scheduler or service.
+7. A public directory match provides source evidence, not blanket installation permission. User notes and logs cannot widen execution authority.
 
-## Persistence and privacy
+## Persistence and identity
 
-The main document stores schema version, scans, app records, version observations, preferences, bounded log signals, and the last 1,000 receipts. Raw operation output is stored separately on the local machine. Catalogue writes replace a temporary file and retain the previous valid document as `.bak`; a corrupt document is preserved and reported, never silently discarded.
+The process locks its catalogue directory. Saves retain the previous valid document and atomically replace the current catalogue. Invalid or unsupported data is reported instead of silently reset. Version history, preferences, observations and bounded receipt metadata stay local; raw operation/batch files are separate and have no automatic retention policy. Application event logs rotate. The catalogue is not encrypted or uploaded.
 
-The alpha relies on the current user's Windows profile permissions; it does not encrypt the catalogue. Raw receipt files currently have no automatic retention cleanup. File export and cloud synchronization are deliberately absent. Git ignores local catalogues, receipt directories, logs, build artifacts, and secrets.
+Matching uses exact provider identity or corroborated name/version/publisher evidence, depending on the source. Known installed-version metadata can resolve some unknown WinGet rows; public latest versions never fill an unknown installed version. Ambiguous and side-by-side records remain distinct. See [public catalogue rules](PUBLIC-CATALOGUE.md) and the [remaining identity work](https://github.com/GitKama/AppTide/issues/5).
 
-## Identity and matching
-
-Only a unique normalized-name plus exact-version match attaches registry metadata to a WinGet row. The actionable identity remains WinGet's exact package ID. Ambiguous native records remain separate; duplicated WinGet IDs are blocked from operations. Matched catalogue UIDs derive from the package ID so a changed uninstall registry key does not erase history or preferences.
-
-This is conservative correlation, not proof that records with similar names are the same product. A package can remain as both a Windows inventory record and a WinGet record. Manual deduplication and explicit association provenance are future work.
+Structured WinGet acquisition remains open in [#1](https://github.com/GitKama/AppTide/issues/1). Display-table parsing is still a beta limitation.

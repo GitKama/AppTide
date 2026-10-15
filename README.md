@@ -2,6 +2,8 @@
 
 **Your Windows apps, updates and software catalogue in one place.**
 
+[![Windows checks](https://github.com/GitKama/AppTide/actions/workflows/ci.yml/badge.svg)](https://github.com/GitKama/AppTide/actions/workflows/ci.yml) · [Open work](https://github.com/GitKama/AppTide/issues) · [Project status](docs/ROADMAP.md) · [Documentation](docs/README.md)
+
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
 **[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.7-beta.1/AppTide-0.2.7-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.7-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
@@ -80,11 +82,13 @@ See [how the catalogue works and how to contribute recipes](docs/CATALOGUE.md).
 
 ## AppTide keeps itself up to date
 
-At startup, AppTide checks this repository's releases in the background, including newer betas. Settings provides a manual check and an option to disable startup checks.
+AppTide checks this repository’s releases at startup by default, including newer betas. **Check for updates** also checks AppTide itself. Every page shows its update status and a direct check or update action; Settings retains the startup opt-out.
 
-When a release is available, **Update AppTide and restart** verifies the download's size and SHA-256 digest, stages the package, retains the previous package files, and relaunches with the same private catalogue. Replacement failures trigger rollback. The portable folder must be writable; the updater does not request elevation.
+When a release is available, **Update and restart** verifies the download's size and SHA-256 digest, stages the package, retains the previous package files, and relaunches with the same private catalogue. Replacement failures trigger rollback. The portable folder must be writable; the updater does not request elevation.
 
-See [self-update behavior, recovery and test coverage](docs/SELF-UPDATES.md). The current download and restart handoff have been tested separately; a complete update from the production banner to a future release remains to be validated. Hash verification does not replace publisher signing.
+![AppTide self-update notice with an explicitly synthetic future release](docs/self-update-beta.png)
+
+See [self-update behavior, recovery and test coverage](docs/SELF-UPDATES.md). Automated download, handoff and rollback checks are documented separately from the remaining disposable-VM acceptance matrix. Hash verification does not replace publisher signing.
 
 ## Private by design
 
@@ -92,7 +96,7 @@ Your catalogue lives in **`%LOCALAPPDATA%\AppTide-Beta`**. Scans accumulate obse
 
 This “learning” uses structured records and reproducible rules. It requires no AI model, and log text never becomes an installer command or grants an app permission to update. Private observations are not automatically contributed to the public database.
 
-AppTide has no telemetry and does not upload your inventory. WinGet and public GitHub checks contact their respective services. Public screenshots and test fixtures use synthetic software data.
+AppTide has no telemetry and does not upload your inventory. WinGet, Microsoft Store and public GitHub checks contact their respective services; installer downloads contact the applicable distribution hosts. Public screenshots and test fixtures use synthetic software data.
 
 Coming from the Electron alpha? Before the beta's first scan, **Settings → Import alpha catalogue** can copy supported data from `%LOCALAPPDATA%\AppTide` while preserving the original. Automatic-update consent is reset. See [data and migration](rust/README.md#data-and-migration).
 
@@ -106,7 +110,7 @@ After a queue finishes or stops, AppTide shows how many apps were verified, skip
 - WinGet CLI parsing rejects unsupported or truncated rows. Ambiguous identities and protected components are excluded from the corresponding executable actions.
 - Installers may require elevation, interaction, closed apps or a reboot. AppTide does not automatically accept installer agreements or promise unattended compatibility with every app.
 - A failed or uncertain result blocks automatic retries for that app; unrelated updates continue while verification remains available. **Stop queue** lets the current installer finish; AppTide cannot roll back third-party changes.
-- Automated tests simulate update and uninstall operations. Read-only live discovery and provider checks have been exercised; real third-party updates and removals have not yet been validated as part of this beta's test process.
+- Automated tests simulate update and uninstall operations. Read-only live discovery and provider checks have been exercised; the repeatable disposable-VM matrix for real installers, removals, UAC and reboots is still open in [#3](https://github.com/GitKama/AppTide/issues/3).
 
 Read the [validation record](docs/VALIDATION.md) and [roadmap](docs/ROADMAP.md) for the evidence and next milestones.
 

@@ -4,7 +4,7 @@
 
 ## Platform
 
-web
+Windows desktop
 
 Windows desktop application with a locally rendered interface, not a hosted website.
 
@@ -18,15 +18,13 @@ Make Windows software maintenance as approachable as a Linux software manager, s
 
 ## Stack
 
-Implementation decision: Electron, plain HTML/CSS/JavaScript, Node built-in modules, Windows PowerShell inventory, and the existing WinGet client. No runtime web service, account, or language-model dependency. The stack is chosen to produce a distributable Windows application using the available toolchain.
-
-The owner subsequently requested Rust and a custom immediate-mode UI. Version 0.2.0-beta.1 implements that direction with egui/eframe, a native registry reader, and a serialized Rust worker. It retains a fixed Windows AppX command and the WinGet CLI. The Electron alpha remains available while missing features are ported. See `rust/README.md` for the exact beta scope.
+Active implementation: Rust with egui/eframe, a serialized worker, native registry inventory, bounded Windows PowerShell metadata helpers, the installed WinGet/Store clients and public GitHub release APIs. No runtime account, web server or language-model dependency. The Electron alpha is retained as historical source, not the active product line. See `rust/README.md`.
 
 ## Capabilities and Constraints
 
 Confirmed request: discover installed software, one-button updates, removal, a catalogue enriched over time, free and open source. The project owner selected AppTide, public GitHub, MIT licence.
 
-First milestone: current-user and machine registry inventory, current-user AppX inventory, WinGet updates, operation receipts, persistent local catalogue, manual source associations, exclusions, and a usable desktop application. Unregistered portable software requires explicit folder selection. Full automatic background scheduling and vendor-specific installers are later milestones.
+Current foundation: current-user and machine registry inventory, current-user AppX inventory, WinGet updates, operation receipts, persistent local catalogue, manual source associations, exclusions, and a usable desktop application. Unregistered portable software requires explicit folder selection. GitHub installer recipes, Store batches, the public app directory and Steam overview are shipped. Closed-app scheduling and additional vendor execution support remain future work.
 
 Inventory and logs are personal data; never commit or upload them. Observed names and log messages are evidence, not executable instructions. A successful process exit alone is not proof of an update. Unknown and ambiguous matches must stay visible.
 

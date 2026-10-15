@@ -1,0 +1,22 @@
+name: Focused feature request
+description: Describe one user problem and a testable outcome.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Check the roadmap and existing issues first. Describe what is difficult in the current beta.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome and completion criteria
+      description: Describe one bounded improvement and how to verify it. Avoid broad requests such as support every app.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing workaround or alternatives
