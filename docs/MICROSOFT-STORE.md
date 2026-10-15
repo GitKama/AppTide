@@ -36,3 +36,7 @@ Real inventory and read-only Store checks were exercised privately. Update dispa
 ## Asynchronous updates in 0.2.6
 
 When the client returns “Updates started”, AppTide keeps a pending receipt with its baseline. Subsequent scans or Store checks verify newer installed versions. A pending batch cannot be submitted twice. Unresolved verification after 24 hours becomes a review item. Open Store Downloads for actual progress or errors. See [diagnostics](UPDATE-DIAGNOSTICS.md).
+
+## Empty checks in 0.2.7
+
+The consumer Store CLI 22608.1401.6.0 returned `Checking for updates…` followed by `No updates found.` with exit zero and empty stderr. Earlier AppTide versions did not recognize that exact wording and incorrectly reported a parsing failure. Version 0.2.7 accepts it as an empty successful check; nonzero exits, stderr and unsupported text still fail explicitly. The regression uses the observed response, including ANSI/BOM handling, without publishing installed-app data.

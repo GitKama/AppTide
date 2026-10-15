@@ -1,5 +1,14 @@
 # AppTide validation
 
+## Rust 0.2.7-beta.1
+
+- 78 default Rust tests passed; three opt-in download/installer tests remain ignored. Formatting, Clippy with warnings denied and the optimized Windows build passed.
+- The Store regression reproduces the installed consumer CLI’s `No updates found.` response. ANSI/BOM variants are accepted; nonzero exit and failure-like text remain rejected. The release executable completed a real read-only Store check with zero updates and no error.
+- UI interaction tests locate the self-update action on all eight pages at 1440x900 and 1040x650, block it during a running operation, and dispatch the update command when idle. The test intercepts the command without downloading or installing software.
+- Native synthetic self-update notices were visually checked at 1440x900 and 1040x700; the UI detector reported no findings.
+- AppTide release checks run at startup by default and with the normal manual scan. The result and retry control are visible outside Settings. Existing opt-out preferences remain respected at startup.
+- No third-party application installation or removal was needed for this hotfix.
+
 ## Rust 0.2.6-beta.1
 
 - 76 default Rust tests passed; three opt-in download/installer tests remain ignored. Formatting, Clippy with warnings denied and the optimized Windows x64 build passed.

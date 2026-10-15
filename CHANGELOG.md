@@ -1,5 +1,11 @@
 # Changes
 
+## 0.2.7-beta.1 — 15 October 2026
+
+- Fix Store checks reporting a parsing error when the installed consumer CLI returns `No updates found.`. Recognize the observed empty result while retaining failure checks.
+- Show AppTide update status on every page and a prominent **Update and restart** notice when a release is available, with no Settings detour. Keep startup checks enabled by default and include AppTide in the normal **Check for updates** action.
+- Keep restart disabled during other operations and preserve verified downloads, package backups and private catalogue data.
+
 ## 0.2.6-beta.1 — 15 October 2026
 
 - Embed a searchable metadata-only directory of 19,754 WinGet/Scoop package records and 2,755 distinct GitHub projects, with source revisions, licences and refresh scripts.

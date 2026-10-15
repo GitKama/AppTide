@@ -119,6 +119,9 @@ fn run() -> Result<(), String> {
             let mut app = ui::Tide::new(service, &cc.egui_ctx);
             app.screenshot = screenshot;
             app.scrolled_demo = scrolled;
+            if demo && args.iter().any(|a| a == "--self-update-preview") {
+                app.self_update_preview();
+            }
             if args.iter().any(|a| a == "--steam-preview") {
                 app.steam_preview();
             }

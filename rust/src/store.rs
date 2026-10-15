@@ -45,9 +45,10 @@ pub fn run(apply: bool) -> Result<winget::Output> {
 pub fn parse(text: &str) -> Result<Vec<Update>> {
     let ansi = regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").unwrap();
     let cleaned = ansi.replace_all(text, "").replace('\r', "");
+    let cleaned = cleaned.trim_start_matches('\u{feff}');
     let count = regex::Regex::new(r"Updates available \((\d+) found\)").unwrap();
     let expected = count
-        .captures(&cleaned)
+        .captures(cleaned)
         .and_then(|c| c[1].parse::<usize>().ok());
     let Some(expected) = expected else {
         if cleaned.lines().any(|l| {
@@ -55,6 +56,8 @@ pub fn parse(text: &str) -> Result<Vec<Update>> {
                 l.trim(),
                 "No updates available."
                     | "No updates available"
+                    | "No updates found."
+                    | "No updates found"
                     | "All apps are up to date."
                     | "All apps are up to date!"
             )
@@ -209,6 +212,25 @@ pub fn demo_check() -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_store_no_updates_wording_is_success_not_a_parse_failure() {
+        // Exact response shape from Store CLI 22608.1401.6.0, no private inventory.
+        let output = winget::Output {
+            code: 0,
+            stdout: "Checking for updates…\r\n\r\nNo updates found.\r\n".into(),
+            stderr: String::new(),
+        };
+        let check = check_output(&output).unwrap();
+        assert!(check.error.is_none());
+        assert!(check.updates.is_empty());
+        assert!(
+            parse("\u{feff}\u{1b}[32mNo updates found.\u{1b}[0m\r\n")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse("No updates found because the network check failed.").is_err());
+        assert!(check_output(&winget::Output { code: 1, ..output }).is_err());
+    }
     #[test]
     fn parses_wrapped_rows_without_treating_installed_version_as_target() {
         let text = "Updates available (2 found)\n┌──────┐\n│ Name │ Publisher │ Version │ Date │\n│ Pocket Radio │ Pocket │ 2.4.0.0 │ 2026-01-01 │\n│ Player │ Project │ │ │\n│ Photos │ Orchid │ 1.0.0.0 │ 2026-01-01 │\n└──────┘\nWould you like to install?\nFailed to read input in non-interactive mode.";

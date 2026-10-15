@@ -1,6 +1,6 @@
 # AppTide Rust beta
 
-Version 0.2.6-beta.1 is the native Rust implementation alongside the Electron alpha.
+Version 0.2.7-beta.1 is the native Rust implementation alongside the Electron alpha.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
 **Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Real third-party updates and uninstalls have not been exercised; the operation tests are synthetic. See [validation](../docs/VALIDATION.md).
@@ -18,7 +18,7 @@ cargo build --release
 ```
 
 WinGet must be available through Windows App Installer for WinGet operations. GitHub installers use their own verified release assets.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.6-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.7-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 

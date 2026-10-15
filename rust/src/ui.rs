@@ -94,6 +94,8 @@ pub struct Tide {
     source_editor: Option<SourceEditor>,
     own_release: Option<crate::self_update::Release>,
     own_status: String,
+    own_checking: bool,
+    own_update_rect: Option<Rect>,
     restarting: bool,
     editor_save_rect: Option<Rect>,
     pub screenshot: Option<String>,
@@ -532,6 +534,10 @@ impl Tide {
                 let result = match command {
                     Command::Scan => {
                         service.cancel.store(false, Ordering::Relaxed);
+                        if !service.demo {
+                            let _ = events.send(Event::SelfChecked(crate::self_update::check()));
+                            context.request_repaint();
+                        }
                         service.scan().map(|_| {
                             if let Err(error) = service.check_store() {
                                 service.warnings.push(error);
@@ -642,6 +648,7 @@ impl Tide {
         } else {
             "Checking GitHub for AppTide updates...".into()
         };
+        let own_checking = !demo && catalog.settings["checkAppTideAtStartup"] != false;
         Self {
             catalog,
             warnings: vec![],
@@ -669,6 +676,8 @@ impl Tide {
             source_editor: None,
             own_release: None,
             own_status,
+            own_checking,
+            own_update_rect: None,
             restarting: false,
             editor_save_rect: None,
             screenshot: None,
@@ -690,17 +699,68 @@ impl Tide {
             return;
         }
         self.busy = true;
+        if !self.demo && matches!(command, Command::Scan | Command::CheckSelf) {
+            self.own_checking = true;
+            self.own_status = "Checking for AppTide updates…".into();
+        }
         self.phase = phase.into();
         self.error = None;
         if self.tx.send(command).is_err() {
             self.error = Some("Worker stopped. Restart AppTide Beta.".into());
             self.busy = false;
+            self.own_checking = false;
         }
     }
     fn prepare(&mut self, kind: &str, ids: Vec<String>) {
         match crate::service::prepare(&self.catalog, kind, &ids) {
             Ok(plan) => self.plan = Some(plan),
             Err(e) => self.error = Some(e),
+        }
+    }
+    pub fn self_update_preview(&mut self) {
+        if self.demo {
+            self.own_release = Some(crate::self_update::Release {
+                version: "9.0.0-beta.1 (demo)".into(),
+                url: String::new(),
+                hash: String::new(),
+                size: 0,
+            });
+        }
+    }
+    fn app_update_notice(&mut self, ui: &mut Ui) {
+        self.own_update_rect = None;
+        if let Some(release) = self.own_release.clone() {
+            egui::Frame::new().fill(NAV).inner_margin(12.0).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(format!("AppTide {} is available", release.version)).strong().color(TEAL));
+                    let button = ui.add_enabled(!self.busy && !self.demo && !self.restarting,
+                        egui::Button::new(RichText::new("Update and restart").color(Color32::WHITE)).fill(TEAL));
+                    self.own_update_rect = Some(button.rect);
+                    if button.clicked() {
+                        self.send(Command::InstallSelf(release), "Downloading and verifying AppTide…");
+                    }
+                });
+                ui.label("Restarts AppTide after the download. Your catalogue and preferences are kept.");
+            });
+            ui.add_space(8.0);
+        } else if !self.demo {
+            ui.horizontal_wrapped(|ui| {
+                if self.own_checking {
+                    ui.spinner();
+                }
+                ui.label(RichText::new(&self.own_status).size(12.0).color(MUTED));
+                if ui
+                    .add_enabled(
+                        !self.busy && !self.own_checking,
+                        egui::Button::new("Check AppTide updates"),
+                    )
+                    .clicked()
+                {
+                    self.send(Command::CheckSelf, "Checking AppTide releases…");
+                }
+            });
+            ui.add_space(8.0);
         }
     }
     fn nav(&mut self, ui: &mut Ui) {
@@ -1187,17 +1247,22 @@ impl Tide {
                             .map(|a| a.uid.clone());
                     }
                 }
-                Event::SelfChecked(result) => match result {
-                    Ok(Some(release)) => {
-                        self.own_status = format!("AppTide {} is available", release.version);
-                        self.own_release = Some(release);
+                Event::SelfChecked(result) => {
+                    self.own_checking = false;
+                    match result {
+                        Ok(Some(release)) => {
+                            self.own_status = format!("AppTide {} is available", release.version);
+                            self.own_release = Some(release);
+                        }
+                        Ok(None) => {
+                            self.own_status = "AppTide is up to date".into();
+                            self.own_release = None;
+                        }
+                        Err(e) => {
+                            self.own_status = format!("AppTide update check unavailable: {e}")
+                        }
                     }
-                    Ok(None) => {
-                        self.own_status = "No newer compatible AppTide release found".into();
-                        self.own_release = None;
-                    }
-                    Err(e) => self.own_status = format!("AppTide update check unavailable: {e}"),
-                },
+                }
                 Event::RestartReady => self.restarting = true,
             }
         }
@@ -1240,7 +1305,7 @@ impl Tide {
                     if self.page!=Page::Store && ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
                 });
             });ui.add_space(18.0);
-            if let Some(release)=self.own_release.clone(){ui.horizontal(|ui|{ui.colored_label(TEAL,format!("AppTide {} is ready",release.version));if ui.add_enabled(!self.busy,egui::Button::new("Update AppTide and restart")).clicked(){self.send(Command::InstallSelf(release),"Downloading and verifying AppTide...");}});}
+            self.app_update_notice(ui);
             if self.demo{ui.colored_label(TEAL,"DEMO  ·  Synthetic apps. Update and uninstall actions are simulated.");}
             if let Some(error)=&self.error{ui.colored_label(Color32::from_rgb(161,43,42),error);}
             if !self.busy && let Some(batch)=self.catalog.extra.get("lastBatch") {
@@ -1633,6 +1698,74 @@ fn open_project() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn self_update_is_visible_on_every_page_and_waits_for_running_operations() {
+        for size in [Vec2::new(1040.0, 650.0), Vec2::new(1440.0, 900.0)] {
+            let ctx = egui::Context::default();
+            let mut app = Tide::new(Service::open(Default::default(), true).unwrap(), &ctx);
+            // Capture the UI command without downloading or restarting anything.
+            let (tx, commands) = mpsc::channel();
+            app.tx = tx;
+            app.demo = false;
+            app.own_release = Some(crate::self_update::Release {
+                version: "9.0.0-beta.1".into(),
+                url: String::new(),
+                hash: String::new(),
+                size: 0,
+            });
+            for page in [
+                Page::Updates,
+                Page::Store,
+                Page::Steam,
+                Page::Directory,
+                Page::Installed,
+                Page::Catalogue,
+                Page::Activity,
+                Page::Settings,
+            ] {
+                app.page = page;
+                for _ in 0..3 {
+                    frame(&mut app, &ctx, size, vec![]);
+                }
+                assert!(
+                    Rect::from_min_size(Pos2::ZERO, size)
+                        .contains_rect(app.own_update_rect.unwrap())
+                );
+            }
+            app.page = Page::Updates;
+            for busy in [true, false] {
+                app.busy = busy;
+                for _ in 0..3 {
+                    frame(&mut app, &ctx, size, vec![]);
+                }
+                let pos = app.own_update_rect.unwrap().center();
+                for pressed in [true, false] {
+                    frame(
+                        &mut app,
+                        &ctx,
+                        size,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                    );
+                }
+                if busy {
+                    assert!(commands.try_recv().is_err());
+                } else {
+                    assert!(matches!(
+                        commands.try_recv().unwrap(),
+                        Command::InstallSelf(_)
+                    ));
+                }
+            }
+        }
+    }
     #[test]
     fn github_update_button_confirms_and_runs_through_worker() {
         for size in [Vec2::new(1440.0, 900.0), Vec2::new(1040.0, 650.0)] {
