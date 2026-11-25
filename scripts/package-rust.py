@@ -14,7 +14,7 @@ args = parser.parse_args()
 repo = pathlib.Path(__file__).resolve().parents[1]
 rust = repo / "rust"
 metadata = json.loads(subprocess.check_output(
-    [args.cargo, "+stable", "metadata", "--format-version=1", "--locked", "--filter-platform", "x86_64-pc-windows-msvc"], cwd=rust
+    [args.cargo, "metadata", "--format-version=1", "--locked", "--filter-platform", "x86_64-pc-windows-msvc"], cwd=rust
 ))
 root = metadata["resolve"]["root"]
 packages = {p["id"]: p for p in metadata["packages"]}

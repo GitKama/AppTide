@@ -124,7 +124,7 @@ pub fn stage(release: &Release, directory: &Path) -> Result<PathBuf> {
     }
     let root = directory.join("updates").join(format!(
         "stage-{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        time::OffsetDateTime::now_utc().unix_timestamp_nanos()
     ));
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let payload = download(&fresh, &root)?;
@@ -224,7 +224,7 @@ fn replace(root: &Path, plan: &Plan) -> Result<PathBuf> {
     }
     let backup = parent.join(format!(
         "AppTide-backup-{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        time::OffsetDateTime::now_utc().unix_timestamp_nanos()
     ));
     fs::create_dir(&backup).map_err(|e| e.to_string())?;
     let mut moved = vec![];
@@ -288,7 +288,36 @@ pub fn apply(path: &Path) -> Result<()> {
         if plan.demo {
             launch.arg("--demo");
         }
-        if let Err(e) = launch.spawn() {
+        let nonce = format!(
+            "{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        );
+        let marker = plan.directory.join(format!("ready-{nonce}"));
+        launch.arg("--update-ready").arg(&nonce);
+        let ready = (|| -> Result<()> {
+            let mut child = launch.spawn().map_err(|e| e.to_string())?;
+            let timer = std::time::Instant::now();
+            loop {
+                if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                    return Err("Replacement exited before reporting a ready window".into());
+                }
+                if fs::read_to_string(&marker).is_ok_and(|v| v == child.id().to_string()) {
+                    let _ = fs::remove_file(&marker);
+                    let _ = fs::write(root.join("window-ready"), crate::catalog::now());
+                    return Ok(());
+                }
+                if timer.elapsed() >= std::time::Duration::from_secs(90) {
+                    child
+                        .kill()
+                        .map_err(|e| format!("Could not stop unresponsive replacement: {e}"))?;
+                    child.wait().map_err(|e| e.to_string())?;
+                    return Err("Replacement did not acknowledge its window in 90 seconds".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+        })();
+        if let Err(e) = ready {
             for file in FILES {
                 let target = plan.target.parent().unwrap().join(file);
                 if backup.join(file).exists() {

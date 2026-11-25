@@ -16,7 +16,6 @@ Historical design research, reviewed 10 October 2026 against upstream documentat
 - [Microsoft: upgrade](https://learn.microsoft.com/en-us/windows/package-manager/winget/upgrade): exact IDs, target versions, installer behavior, pinning, agreements, and safety switches.
 - [Microsoft: uninstall](https://learn.microsoft.com/en-us/windows/package-manager/winget/uninstall): supports installed apps beyond those originally installed through WinGet; ambiguous selections need filtering.
 - [Microsoft: troubleshooting and logs](https://learn.microsoft.com/en-us/windows/package-manager/winget/troubleshooting): diagnostic logs and their location.
-- [Electron security](https://www.electronjs.org/docs/latest/tutorial/security): isolated contexts, renderer sandboxing, restricted navigation, sender validation, and a narrow preload bridge.
 
 ## Conclusions
 
@@ -24,4 +23,4 @@ There is no Windows-wide universal update protocol. Discovery can become broad; 
 
 AppTide therefore treats an observed application, a possible update source, an approved executable recipe, and a verified operation as different things. This allows the catalogue to grow without silently widening what may execute.
 
-For the first alpha, WinGet source-restricted CLI output is parsed conservatively because it is already installed on the target machine. No extra WinGet PowerShell module is installed. A structured COM/PowerShell provider is the next reliability improvement; CLI display parsing remains a beta limitation tracked in [#1](https://github.com/GitKama/AppTide/issues/1). See [current architecture](ARCHITECTURE.md) for the implemented providers.
+For CLI fallback, WinGet source-restricted CLI output is parsed conservatively because it is already installed on the target machine. No extra WinGet PowerShell module is installed. A structured COM/PowerShell provider is the next reliability improvement; CLI display parsing remains a beta limitation tracked in [#1](https://github.com/GitKama/AppTide/issues/1). See [current architecture](ARCHITECTURE.md) for the implemented providers.

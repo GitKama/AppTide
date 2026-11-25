@@ -17,6 +17,7 @@ use std::{
 pub struct Plan {
     pub kind: String,
     pub interactive: bool,
+    pub automatic: bool,
     pub apps: Vec<App>,
     pub created: Instant,
 }
@@ -84,6 +85,10 @@ impl Service {
         }
     }
     pub fn scan(&mut self) -> Result<bool> {
+        self.scan_inventory(true)
+    }
+    pub fn scan_inventory(&mut self, discovery: bool) -> Result<bool> {
+        let started = Instant::now();
         if self.demo {
             self.catalog.scans += 1;
             self.catalog.last_scan = Some(now());
@@ -98,7 +103,9 @@ impl Service {
                     .collect()
             })
             .unwrap_or_default();
-        native.extend(crate::portable::scan(&folders)?);
+        if discovery {
+            native.extend(crate::portable::scan(&folders)?);
+        }
         native.extend(
             self.catalog
                 .apps
@@ -107,7 +114,9 @@ impl Service {
                 .cloned(),
         );
         self.warnings.clear();
-        self.warnings.extend(crate::steam::enrich(&mut native));
+        if discovery {
+            self.warnings.extend(crate::steam::enrich(&mut native));
+        }
         self.recheck_store_pending(&native);
         let (rows, rejected, complete) = match winget::list() {
             Ok((r, n)) => (r, n, true),
@@ -117,19 +126,126 @@ impl Service {
             }
         };
         if rejected > 0 {
-            self.warnings.push(format!(
-                "{rejected} WinGet lines excluded (summaries or unsupported rows)."
-            ));
+            self.warnings
+                .push(format!("{rejected} unsupported WinGet rows excluded."));
         }
         // A table with skipped rows cannot prove that a package is absent.
         self.absence_verifiable = complete && rejected == 0;
         let observed = winget::reconcile(native, rows);
-        self.catalog.observe(observed);
+        self.observe_inventory(observed, discovery);
+        self.reconcile_receipts();
         crate::knowledge::enrich(&mut self.catalog);
-        self.learn_logs();
-        self.refresh_releases(None);
+        let inventory_ms = started.elapsed().as_millis();
+        if discovery {
+            self.learn_logs();
+            self.refresh_releases(None);
+        }
+        self.diagnostic(
+            "scan-timing",
+            &format!(
+                "discovery={discovery} inventory_ms={inventory_ms} total_ms={}",
+                started.elapsed().as_millis()
+            ),
+        );
         self.save()?;
         Ok(complete)
+    }
+    fn observe_inventory(&mut self, observed: Vec<App>, discovery: bool) {
+        let retained: Vec<_> = self
+            .catalog
+            .apps
+            .values()
+            .filter(|a| {
+                a.present
+                    && ((!self.absence_verifiable && a.winget_id.is_some())
+                        || (!discovery && matches!(a.kind.as_str(), "portable" | "steam")))
+            })
+            .cloned()
+            .collect();
+        let mut observed = observed;
+        for a in &mut observed {
+            if !self.absence_verifiable
+                && a.winget_id.is_none()
+                && let Some(old) = retained
+                    .iter()
+                    .find(|old| old.key == a.key && old.winget_id.is_some())
+            {
+                a.uid.clone_from(&old.uid);
+                a.winget_id.clone_from(&old.winget_id);
+                a.extra.insert("wingetStale".into(), true.into());
+            } else {
+                a.extra.insert("wingetStale".into(), false.into());
+            }
+        }
+        self.catalog.observe(observed);
+        for mut old in retained {
+            if !self.catalog.apps.get(&old.uid).is_some_and(|a| a.present) {
+                if old.winget_id.is_some() {
+                    old.extra.insert("wingetStale".into(), true.into());
+                    old.available.clear();
+                }
+                self.catalog.apps.insert(old.uid.clone(), old);
+            }
+        }
+    }
+    fn reconcile_receipts(&mut self) {
+        for r in self.catalog.receipts.iter_mut().rev().take(1000) {
+            if r["kind"] != "update" || r["status"] != "unverified" || r["exitCode"] != 0 {
+                continue;
+            }
+            let Some(id) = r["appId"].as_str() else {
+                continue;
+            };
+            let Some(app) = self.catalog.apps.get(id) else {
+                continue;
+            };
+            if !app.present
+                || app.ambiguous
+                || app.extra.get("wingetStale") == Some(&Value::Bool(true))
+                || !catalog::known_version(&app.version)
+                || r["target"].as_str().is_none_or(|v| {
+                    !catalog::known_version(v)
+                        || crate::releases::compare(&app.version, v) != "Matches release"
+                })
+                || r["finishedAt"]
+                    .as_str()
+                    .and_then(crate::catalog::age_seconds)
+                    .is_none_or(|s| !(0..=7 * 86400).contains(&s))
+            {
+                continue;
+            }
+            if app.extra.contains_key("identityNotice") && r["publisher"].is_null() {
+                r["laterReview"]=format!("Version {} is now present. The publisher identity changed; review the association before retrying.",app.version).into();
+                continue;
+            }
+            if r["registration"].as_str().is_some_and(|k| k != app.key)
+                || r["publisher"].as_str().is_some_and(|p| p != app.publisher)
+                || r["scope"].as_str().is_some_and(|s| s != app.scope)
+            {
+                continue;
+            }
+            if self
+                .catalog
+                .apps
+                .values()
+                .filter(|other| {
+                    other.present && crate::github_update::same_installation(other, app)
+                })
+                .count()
+                != 1
+            {
+                continue;
+            }
+            if !self.absence_verifiable
+                && let Some(package) = app.winget_id.as_deref()
+                && !crate::winget::confirm_installed(package, &app.version)
+            {
+                continue;
+            }
+            r["initialStatus"] = "unverified".into();
+            r["status"] = "verified".into();
+            r["laterObservation"] = json!({"at":now(),"version":app.version,"source":app.evidence,"detail":"Requested version observed on a later scan."});
+        }
     }
     pub fn refresh_sources(&mut self) -> Result<()> {
         if !self.demo {
@@ -247,7 +363,7 @@ impl Service {
         }
         let id = format!(
             "store-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         );
         let file = format!("{id}.log");
         let index = self.catalog.receipts.len();
@@ -360,10 +476,8 @@ impl Service {
                     r["detail"]=format!("Microsoft Store batch: {verified} verified, {review} still awaiting a newer installed version. Open Store Downloads for progress or errors, then check again.").into();
                     if r["startedAt"]
                         .as_str()
-                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                        .is_some_and(|t| {
-                            chrono::Utc::now().signed_duration_since(t).num_hours() >= 24
-                        })
+                        .and_then(crate::catalog::age_seconds)
+                        .is_some_and(|t| t >= 86400)
                     {
                         r["status"] = "unverified".into();
                         r["detail"]=format!("Store verification still incomplete after 24 hours: {verified} verified, {review} need review. Inspect Store Downloads before starting another batch.").into();
@@ -392,11 +506,8 @@ impl Service {
                             .as_str()
                             .or_else(|| w["checkedAt"].as_str())
                     })
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .is_some_and(|t| {
-                        chrono::Utc::now().signed_duration_since(t).num_seconds()
-                            < if only.is_some() { 0 } else { 3600 }
-                    });
+                    .and_then(crate::catalog::age_seconds)
+                    .is_some_and(|t| t < if only.is_some() { 0 } else { 3600 });
                 if !recent
                     || a.extra
                         .get("watch")
@@ -468,7 +579,7 @@ impl Service {
             }
             let key = format!(
                 "manual-{}",
-                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                time::OffsetDateTime::now_utc().unix_timestamp_nanos()
             );
             let id = catalog::digest(&key)[..24].to_string();
             self.catalog.apps.insert(
@@ -589,7 +700,8 @@ impl Service {
         if ids.is_empty() {
             return Ok(());
         }
-        let plan = prepare(&self.catalog, "update", &ids)?;
+        let mut plan = prepare(&self.catalog, "update", &ids)?;
+        plan.automatic = true;
         self.execute(plan, status)
     }
     fn learn_logs(&mut self) {
@@ -602,6 +714,18 @@ impl Service {
             .values()
             .filter_map(|a| a.winget_id.clone())
             .collect();
+        let package_ids: std::collections::HashSet<_> = ids.iter().map(String::as_str).collect();
+        let identity = catalog::digest(&ids.join("\n"));
+        let mut seen: Vec<String> = serde_json::from_value(
+            self.catalog
+                .extra
+                .get("processedLogs")
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default();
+        static TOKENS: std::sync::LazyLock<regex::Regex> =
+            std::sync::LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9._+\-]+").unwrap());
         for suffix in [
             "Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir",
             "Microsoft/WinGet/DiagOutputDir",
@@ -627,19 +751,34 @@ impl Service {
                     continue;
                 };
                 let hash = catalog::digest(&text);
-                for id in &ids {
-                    if log_mentions(&text, id)
-                        && !self
-                            .catalog
-                            .log_signals
-                            .iter()
-                            .any(|s| s["hash"] == hash && s["packageId"] == *id)
+                let cache_key = format!("{hash}:{identity}");
+                if seen.contains(&cache_key) {
+                    continue;
+                }
+                seen.push(cache_key);
+                for id in TOKENS
+                    .find_iter(&text)
+                    .map(|m| m.as_str())
+                    .filter(|id| package_ids.contains(id))
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    if !self
+                        .catalog
+                        .log_signals
+                        .iter()
+                        .any(|s| s["hash"] == hash && s["packageId"] == id)
                     {
                         self.catalog.log_signals.push(json!({"packageId":id,"hash":hash,"type":"mentioned-in-winget-log","observedAt":now()}));
                     }
                 }
             }
         }
+        if seen.len() > 128 {
+            seen.drain(..seen.len() - 128);
+        }
+        self.catalog
+            .extra
+            .insert("processedLogs".into(), json!(seen));
         let n = self.catalog.log_signals.len();
         if n > 5000 {
             self.catalog.log_signals.drain(..n - 5000);
@@ -657,50 +796,40 @@ impl Service {
                 .count();
         }
     }
-    pub fn import_alpha(&mut self) -> Result<()> {
-        if self.catalog.scans > 0 || !self.catalog.apps.is_empty() {
-            return Err("Import is available only before the beta has its own catalogue.".into());
-        }
-        let path = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA missing")?)
-            .join("AppTide/catalog.json");
-        if !path.is_file() {
-            return Err("No alpha catalogue found in LocalAppData/AppTide.".into());
-        }
-        let mut imported = Catalog::load(&path)?;
-        // Migration never carries automatic execution consent across applications.
-        imported.settings = json!({"automatic":false});
-        for app in imported.apps.values_mut() {
-            app.auto_update = false;
-        }
-        self.catalog = imported;
-        self.save()
-    }
     pub fn execute(&mut self, plan: Plan, status: impl FnMut(&str, &Catalog)) -> Result<()> {
         let interactive = plan.interactive;
-        self.execute_with(plan, status, Self::scan, |service, kind, before| {
-            if service.demo {
-                let a = service.catalog.apps.get_mut(&before.uid).unwrap();
-                if kind == "update" {
-                    a.version = a.available.clone();
-                    a.available.clear();
-                } else {
-                    a.present = false;
+        self.execute_with(
+            plan,
+            status,
+            |s| s.scan_inventory(false),
+            |service, kind, before| {
+                if service.demo {
+                    let a = service.catalog.apps.get_mut(&before.uid).unwrap();
+                    if kind == "update" {
+                        a.version = a.available.clone();
+                        a.available.clear();
+                    } else {
+                        a.present = false;
+                    }
+                    return Ok(winget::Output {
+                        code: 0,
+                        stdout: "Simulated operation".into(),
+                        stderr: String::new(),
+                    });
                 }
-                return Ok(winget::Output {
-                    code: 0,
-                    stdout: "Simulated operation".into(),
-                    stderr: String::new(),
-                });
-            }
-            if kind == "update" && before.winget_id.is_none() {
-                return crate::github_update::install(before, &service.directory.join("downloads"));
-            }
-            winget::run(
-                "winget.exe",
-                &winget::args_mode(kind, before, interactive)?,
-                None,
-            )
-        })
+                if kind == "update" && before.winget_id.is_none() {
+                    return crate::github_update::install(
+                        before,
+                        &service.directory.join("downloads"),
+                    );
+                }
+                winget::run(
+                    "winget.exe",
+                    &winget::args_mode(kind, before, interactive)?,
+                    None,
+                )
+            },
+        )
     }
     fn save_batch(&mut self, batch: &Value) -> Result<()> {
         self.catalog.extra.insert("lastBatch".into(), batch.clone());
@@ -726,7 +855,7 @@ impl Service {
     ) -> Result<()> {
         let batch_id = format!(
             "{}-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos(),
             std::process::id()
         );
         let mut batch = json!({"id":batch_id,"kind":plan.kind,"startedAt":now(),"status":"running",
@@ -810,10 +939,27 @@ impl Service {
             if self.cancel.load(Ordering::Relaxed) {
                 break;
             }
-            let receipt_id = format!("{}-{}", chrono::Utc::now().timestamp_millis(), before.uid);
-            let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"appId":before.uid,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"provider":if before.winget_id.is_some(){"WinGet"}else{"GitHub"},"status":"running"});
+            let receipt_id = format!(
+                "{}-{}",
+                time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000,
+                before.uid
+            );
+            let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"automatic":plan.automatic,"registration":before.key,"publisher":before.publisher,"scope":before.scope,"appId":before.uid,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"provider":if before.winget_id.is_some(){"WinGet"}else{"GitHub"},"status":"running"});
             // Never silently change the reviewed target. Skip stale items without blocking unrelated apps.
-            if let Err(reason) = validate_app(&plan.kind, before, &self.catalog) {
+            let valid = validate_app(&plan.kind, before, &self.catalog).and_then(|()| {
+                if plan.automatic {
+                    let current = self.catalog.apps.get(&before.uid).ok_or("Installation changed")?;
+                    if self.catalog.settings["automatic"] != true
+                        || self.catalog.settings["automaticConsent"] != 2
+                        || !automatic_candidates(&self.catalog).contains(&current.uid)
+                        || current.key != before.key || current.scope != before.scope
+                        || current.publisher != before.publisher || current.winget_id != before.winget_id {
+                        return Err("Automatic consent or installation identity changed. No installer started.".into());
+                    }
+                }
+                Ok(())
+            });
+            if let Err(reason) = valid {
                 receipt["status"] = "skipped".into();
                 receipt["detail"] = reason.into();
                 receipt["finishedAt"] = now().into();
@@ -988,6 +1134,7 @@ pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
     Ok(Plan {
         kind: kind.into(),
         interactive: false,
+        automatic: false,
         apps,
         created: Instant::now(),
     })
@@ -1000,8 +1147,8 @@ pub fn automatic_due(c: &Catalog) -> bool {
         })
         && c.settings["lastAutomaticAttempt"]
             .as_str()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .is_some_and(|t| chrono::Utc::now().signed_duration_since(t).num_seconds() >= 3600)
+            .and_then(crate::catalog::age_seconds)
+            .is_some_and(|t| t >= 3600)
 }
 pub fn automatic_candidates(c: &Catalog) -> Vec<String> {
     c.apps
@@ -1060,6 +1207,7 @@ fn validate_app(kind: &str, before: &App, catalog: &Catalog) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(test)]
 fn log_mentions(text: &str, id: &str) -> bool {
     let pattern = format!(
         r"(?:^|[^A-Za-z0-9._+\-]){}(?:$|[^A-Za-z0-9._+\-])",
@@ -1396,7 +1544,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "apptide-lock-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         let first = Service::open(dir.clone(), false).unwrap();
         assert!(Service::open(dir.clone(), false).is_err());
@@ -1459,6 +1607,62 @@ mod tests {
         let plan = prepare(&s.catalog, "update", &ids).unwrap();
         assert_eq!(plan.apps.len(), 3);
         (s, plan)
+    }
+    #[test]
+    fn revoked_automatic_consent_is_checked_after_preflight() {
+        let (mut s, mut p) = batch_fixture();
+        p.apps.truncate(1);
+        p.automatic = true;
+        let id = p.apps[0].uid.clone();
+        s.automatic_preference(None, true).unwrap();
+        s.automatic_preference(Some(&id), true).unwrap();
+        s.execute_with(
+            p,
+            |_, _| {},
+            |s| {
+                s.catalog.apps.get_mut(&id).unwrap().auto_update = false;
+                Ok(true)
+            },
+            |_, _, _| panic!("revoked consent launched an installer"),
+        )
+        .unwrap();
+        assert_eq!(s.catalog.receipts.last().unwrap()["status"], "skipped");
+    }
+    #[test]
+    fn missing_winget_keeps_last_observation_until_full_scan() {
+        let (mut s, p) = batch_fixture();
+        let old = &p.apps[0];
+        let before = old.last_seen.clone();
+        s.absence_verifiable = false;
+        s.observe_inventory(vec![], true);
+        let stale = &s.catalog.apps[&old.uid];
+        assert!(stale.present && !actionable(stale));
+        assert_eq!(stale.last_seen, before);
+        s.absence_verifiable = true;
+        s.observe_inventory(vec![old.clone()], true);
+        assert!(actionable(&s.catalog.apps[&old.uid]));
+    }
+    #[test]
+    fn later_verification_keeps_original_observations_and_requires_unique_target() {
+        let (mut s, p) = batch_fixture();
+        let a = &p.apps[0];
+        s.catalog.receipts = vec![
+            json!({"kind":"update","appId":a.uid,"provider":"WinGet","target":a.available,"finishedAt":now(),"status":"unverified","exitCode":0,"observedVersions":[]}),
+        ];
+        s.reconcile_receipts();
+        assert_eq!(s.catalog.receipts[0]["status"], "unverified");
+        simulated_update(&mut s, "update", a).unwrap();
+        let mut other = s.catalog.apps[&a.uid].clone();
+        other.uid = "duplicate".into();
+        s.catalog.apps.insert(other.uid.clone(), other);
+        s.reconcile_receipts();
+        assert_eq!(s.catalog.receipts[0]["status"], "unverified");
+        s.catalog.apps.remove("duplicate");
+        s.reconcile_receipts();
+        let r = &s.catalog.receipts[0];
+        assert_eq!(r["status"], "verified");
+        assert_eq!(r["observedVersions"], json!([]));
+        assert_eq!(r["laterObservation"]["version"], a.available);
     }
     fn simulated_update(s: &mut Service, _: &str, before: &App) -> Result<winget::Output> {
         let a = s.catalog.apps.get_mut(&before.uid).unwrap();
@@ -1563,7 +1767,7 @@ mod tests {
         let directory = std::env::temp_dir().join(format!(
             "apptide-batch-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         s.directory = directory.clone();
         s.demo = false;
@@ -1762,9 +1966,10 @@ mod tests {
         s.automatic_preference(Some(&id), true).unwrap();
         s.automatic_preference(None, true).unwrap();
         assert!(!automatic_due(&s.catalog));
-        s.catalog.settings["lastAutomaticAttempt"] = (chrono::Utc::now()
-            - chrono::Duration::hours(2))
-        .to_rfc3339()
+        s.catalog.settings["lastAutomaticAttempt"] = (time::OffsetDateTime::now_utc()
+            - time::Duration::hours(2))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
         .into();
         assert!(automatic_due(&s.catalog));
         assert_eq!(automatic_candidates(&s.catalog), vec![id.clone()]);

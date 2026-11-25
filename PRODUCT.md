@@ -18,7 +18,7 @@ Make Windows software maintenance as approachable as a Linux software manager, s
 
 ## Stack
 
-Active implementation: Rust with egui/eframe, a serialized worker, native registry inventory, bounded Windows PowerShell metadata helpers, the installed WinGet/Store clients and public GitHub release APIs. No runtime account, web server or language-model dependency. The Electron alpha is retained as historical source, not the active product line. See `rust/README.md`.
+Active implementation: Rust with egui/eframe, a serialized worker, native registry inventory, bounded Windows PowerShell metadata helpers, the installed WinGet/Store clients and public GitHub release APIs. No runtime account, web server or language-model dependency. See `rust/README.md`.
 
 ## Capabilities and Constraints
 

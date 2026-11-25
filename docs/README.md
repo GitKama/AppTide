@@ -1,6 +1,5 @@
 # AppTide documentation
 
-The current app is the native Rust beta. Start with the [download and quick start](../README.md). Historical alpha decisions and release records remain available but do not define current support.
 
 ## Using AppTide
 

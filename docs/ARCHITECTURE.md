@@ -1,6 +1,5 @@
 # Native Rust architecture
 
-This describes the active 0.2.x Rust beta. The original Electron implementation remains in the [0.1.1 alpha tag](https://github.com/GitKama/AppTide/tree/v0.1.1-alpha); its renderer/IPC model does not describe the native app.
 
 ## Data and operations
 
@@ -56,3 +55,9 @@ The process locks its catalogue directory. Saves retain the previous valid docum
 Matching uses exact provider identity or corroborated name/version/publisher evidence, depending on the source. Known installed-version metadata can resolve some unknown WinGet rows; public latest versions never fill an unknown installed version. Ambiguous and side-by-side records remain distinct. See [public catalogue rules](PUBLIC-CATALOGUE.md) and the [remaining identity work](https://github.com/GitKama/AppTide/issues/5).
 
 Structured WinGet acquisition remains open in [#1](https://github.com/GitKama/AppTide/issues/1). Display-table parsing is still a beta limitation.
+
+## Verification and storage
+
+Queue verification checks current installation identity and version. A full discovery scan also reads portable folders, refreshes Steam metadata, learns from WinGet logs and refreshes watched releases. AppTide records scan timings locally. The WinGet reader tries an installed Microsoft.WinGet.Client module, with a conservative table parser as fallback. Missing source records remain visible as stale.
+
+The updater waits for an acknowledgement from the replacement UI. Settings offers a revalidated cleanup preview for older cached installers and completed archives. Recovery packages and operation history stay available.

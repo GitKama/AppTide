@@ -1,6 +1,6 @@
 [package]
 name = "apptide-beta"
-version = "0.2.7-beta.1"
+version = "0.2.8-beta.1"
 edition = "2024"
 license = "MIT"
 description = "AppTide native Windows software manager"
@@ -11,7 +11,7 @@ eframe = { version = "=0.36.2", default-features = false, features = ["default_f
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 regex = "1"
 fs2 = "0.4"
 base64 = "0.22"

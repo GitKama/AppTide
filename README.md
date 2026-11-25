@@ -6,9 +6,11 @@
 
 AppTide is a free, MIT-licensed Windows software manager built in Rust. Find installed apps, update supported software together, uninstall apps, and keep a private catalogue of versions, sources and update history—even for software outside WinGet.
 
-**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.7-beta.1/AppTide-0.2.7-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.7-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
+**[Download the Windows x64 beta](https://github.com/GitKama/AppTide/releases/download/v0.2.8-beta.1/AppTide-0.2.8-beta.1-windows-x64.zip)** · [Release notes & checksum](https://github.com/GitKama/AppTide/releases/tag/v0.2.8-beta.1) · [All releases](https://github.com/GitKama/AppTide/releases) · [Changelog](CHANGELOG.md)
 
-Current release: **0.2.7-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No Node.js, Electron or Rust installation is needed to run the downloaded app.
+Dark mode is the default. Change it in **Settings â†’ Appearance**. Use **Activity â†’ Verify again** to check an earlier installation result.
+
+Current release: **0.2.8-beta.1**. Portable, with a custom native immediate-mode interface built with egui. No development tools are needed to run the downloaded app.
 
 ![AppTide Rust beta showing its software catalogue with synthetic demonstration apps](docs/rust-beta.png)
 
@@ -39,6 +41,10 @@ Automatic app updates are **off by default**. Enable them in Settings and opt in
 | AppTide self-updates | Check for newer AppTide releases at startup and offer an update-and-restart action with download verification and package backups. |
 
 WinGet can recognize software installed outside WinGet, so you do not need to reinstall everything through a new package manager. Execution still requires a reliable package match. For other apps, AppTide shows an official update route, a release watch, or **Needs research** rather than guessing an installer.
+
+## New in 0.2.8
+
+AppTide opens in dark mode, remembers your appearance choice, and keeps last-known WinGet records visible during provider outages. Activity can verify earlier updates without rerunning installers and open their exact logs. Settings shows storage use and lets you review old installer files for cleanup.
 
 ## New in 0.2.7
 
@@ -98,7 +104,6 @@ This “learning” uses structured records and reproducible rules. It requires 
 
 AppTide has no telemetry and does not upload your inventory. WinGet, Microsoft Store and public GitHub checks contact their respective services; installer downloads contact the applicable distribution hosts. Public screenshots and test fixtures use synthetic software data.
 
-Coming from the Electron alpha? Before the beta's first scan, **Settings → Import alpha catalogue** can copy supported data from `%LOCALAPPDATA%\AppTide` while preserving the original. Automatic-update consent is reset. See [data and migration](rust/README.md#data-and-migration).
 
 ## Troubleshooting updates
 
@@ -135,11 +140,3 @@ Contributions are welcome: improve detection, add narrowly matched recipes backe
 - [Catalogue format, sources and recipe contributions](docs/CATALOGUE.md)
 - [Contribution guidelines](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 - [GitHub checks](https://github.com/GitKama/AppTide/actions) · [Report an issue](https://github.com/GitKama/AppTide/issues)
-
-## Project history
-
-AppTide began as an Electron alpha and moved to a native Rust beta in the 0.2 series. The original source, release tags, downloads and changelog remain available so the development history stays visible. The top-level Node.js application is the legacy alpha; new native development belongs in `rust/`.
-
-[Browse all releases](https://github.com/GitKama/AppTide/releases) · [Electron alpha source and instructions](https://github.com/GitKama/AppTide/tree/v0.1.1-alpha) · [Release and versioning policy](docs/RELEASING.md)
-
-Free and open source under the **[MIT licence](LICENSE)**.

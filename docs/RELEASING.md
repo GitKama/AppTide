@@ -1,6 +1,5 @@
 # Releases and development history
 
-AppTide retains public commits, annotated release notes, tags and downloadable assets for each milestone. Published tags and assets are not overwritten. Corrections get a new version. The Electron alpha remains in source/history while the native Rust implementation evolves.
 
 ## Versioning
 
@@ -13,6 +12,7 @@ AppTide retains public commits, annotated release notes, tags and downloadable a
 - `0.2.5-beta.1`: GitHub installer updates and native application icon.
 - `0.2.6-beta.1`: public metadata directory, Steam library and improved diagnostics.
 - `0.2.7-beta.1`: empty Store check fix and visible AppTide self-update controls.
+- `0.2.8-beta.1` adds dark mode, delayed verification, cache management and startup acknowledgement.
 - Subsequent small changes increment the patch version, with a beta suffix until stability criteria are met. Additional candidates of the same milestone increment the beta number. A final stable version removes the prerelease suffix.
 
 ## Release checklist
@@ -26,7 +26,7 @@ AppTide retains public commits, annotated release notes, tags and downloadable a
 7. Run `python scripts/check-docs.py` from the repository root; check README/download links, support policy, current UI labels and source metadata. Documentation-only maintenance does not need a new application version or replacement binaries.
 8. Preserve all previous releases. Link the current release in the README and document material limitations. Future development follows in another commit/version rather than rewriting history.
 
-GitHub Actions runs Rust checks and the legacy Electron checks on pushes and pull requests. Rust dependency/build caching accelerates subsequent iterations. Contributions should use public source documentation and synthetic fixtures; see [catalogue contributions](CATALOGUE.md#contributing-a-bundled-recipe).
+GitHub Actions runs Rust checks on pushes and pull requests. Rust dependency/build caching accelerates subsequent iterations. Contributions should use public source documentation and synthetic fixtures; see [catalogue contributions](CATALOGUE.md#contributing-a-bundled-recipe).
 
 ## Repository upkeep
 

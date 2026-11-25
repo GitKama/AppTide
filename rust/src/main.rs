@@ -11,6 +11,7 @@ mod releases;
 mod self_update;
 mod service;
 mod steam;
+mod storage;
 mod store;
 mod ui;
 mod winget;
@@ -22,6 +23,7 @@ fn main() {
             arg == "--scan-report"
                 || arg == "--apply-self-update"
                 || arg == "--self-update-report"
+                || arg == "--verify-report"
                 || arg == "--inventory-report"
                 || arg == "--store-report"
         }) {
@@ -78,12 +80,21 @@ fn run() -> Result<(), String> {
     let directory = value("--data-dir")
         .map(PathBuf::from)
         .unwrap_or_else(catalog::data_directory);
-    let mut service = service::Service::open(directory, demo)?;
-    if args.iter().any(|a| a == "--import-alpha") {
-        service.import_alpha()?;
+    let ready_marker = value("--update-ready")
+        .filter(|s| {
+            !s.is_empty() && s.len() <= 80 && s.bytes().all(|c| c.is_ascii_digit() || c == b'-')
+        })
+        .map(|s| directory.join(format!("ready-{s}")));
+    if !demo {
+        let _ = diagnostics::record(&directory, "startup-stage", "Opening catalogue");
     }
-    if let Some(path) = value("--scan-report") {
-        let complete = service.scan()?;
+    let mut service = service::Service::open(directory, demo)?;
+    if let Some(path) = value("--scan-report").or_else(|| value("--verify-report")) {
+        let complete = if value("--verify-report").is_some() {
+            service.scan_inventory(false)?
+        } else {
+            service.scan()?
+        };
         let report = serde_json::json!({"complete":complete,"records":service.catalog.apps.values().filter(|a|a.present).count(),"wingetRecords":service.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count(),"eligibleUpdates":service.catalog.apps.values().filter(|a|catalog::eligible(a)).count(),"scans":service.catalog.scans,"warnings":service.warnings,"coverage":knowledge::coverage(&service.catalog)});
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
             .map_err(|e| e.to_string())?;
@@ -112,11 +123,14 @@ fn run() -> Result<(), String> {
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
+    service.diagnostic("startup-stage", "Creating native window and renderer");
     eframe::run_native(
         "AppTide Beta",
         options,
         Box::new(move |cc| {
+            service.diagnostic("startup-stage", "Renderer initialized");
             let mut app = ui::Tide::new(service, &cc.egui_ctx);
+            app.ready_marker = ready_marker;
             app.screenshot = screenshot;
             app.scrolled_demo = scrolled;
             if demo && args.iter().any(|a| a == "--self-update-preview") {

@@ -199,7 +199,7 @@ pub fn download(o: &Offer, root: &Path) -> Result<PathBuf> {
     let stage = root.join(format!(
         "github-{}-{}",
         o.id,
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        time::OffsetDateTime::now_utc().unix_timestamp_nanos()
     ));
     std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
     let file = stage.join(&o.name);

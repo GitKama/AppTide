@@ -8,7 +8,14 @@ use std::{
 };
 pub type Result<T> = std::result::Result<T, String>;
 pub fn now() -> String {
-    chrono::Utc::now().to_rfc3339()
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .expect("UTC fits RFC 3339")
+}
+pub fn age_seconds(value: &str) -> Option<i64> {
+    let at =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    Some((time::OffsetDateTime::now_utc() - at).whole_seconds())
 }
 pub fn digest(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
@@ -232,7 +239,8 @@ pub fn known_version(s: &str) -> bool {
         && !s.contains('…')
 }
 pub fn actionable(a: &App) -> bool {
-    a.present
+    a.extra.get("wingetStale") != Some(&Value::Bool(true))
+        && a.present
         && !crate::steam::is_game(a)
         && a.winget_id.as_deref().is_some_and(crate::winget::valid_id)
         && !a.protected
@@ -276,6 +284,18 @@ pub fn classify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn timestamps_accept_historical_and_new_receipts() {
+        for v in [
+            "2026-11-25T10:00:00.123456700+00:00",
+            "2026-11-25T11:00:00.1234567+01:00",
+            "2026-11-25T10:00:00Z",
+        ] {
+            assert!(age_seconds(v).is_some());
+        }
+        assert!(age_seconds(&now()).is_some());
+        assert!(age_seconds("bad").is_none());
+    }
     #[test]
     fn numeric_padding_verifies_only_a_real_version_change() {
         let before = App {
@@ -342,7 +362,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "apptide-save-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         let mut c = Catalog::default();
         c.save(&dir).unwrap();

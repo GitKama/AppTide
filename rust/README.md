@@ -1,9 +1,9 @@
 # AppTide Rust beta
 
-Version 0.2.7-beta.1 is the native Rust implementation alongside the Electron alpha.
+Version 0.2.8-beta.1 is the native Rust implementation.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
-**Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, live read-only inventory, and alpha import checks passed. Automated operation tests use synthetic installers/state; repeatable real-installer VM acceptance is tracked in [#3](https://github.com/GitKama/AppTide/issues/3). See [validation](../docs/VALIDATION.md).
+**Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, and live read-only inventory checks passed. Automated operation tests use synthetic installers/state; repeatable real-installer VM acceptance is tracked in [#3](https://github.com/GitKama/AppTide/issues/3). See [validation](../docs/VALIDATION.md).
 
 ## Build and run
 
@@ -18,7 +18,7 @@ cargo build --locked --release
 ```
 
 WinGet must be available through Windows App Installer for WinGet operations. GitHub installers use their own verified release assets.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.7-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.8-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 
@@ -51,9 +51,8 @@ AppTide checks its own GitHub beta releases at startup by default and during **C
 
 ## Data and migration
 
-Beta data: `%LOCALAPPDATA%\AppTide-Beta`. Alpha data remains in `%LOCALAPPDATA%\AppTide`.
+Catalogue folder: `%LOCALAPPDATA%\AppTide-Beta`.
 
-Before the beta's first scan, **Settings → Import alpha catalogue** copies supported schema-1 data. It never overwrites the alpha. Automatic execution consent is reset. Only one process can open a beta catalogue at a time. Saves flush a temporary file, retain a backup, then replace the catalogue atomically on Windows. Corrupt or unsupported catalogues produce an error instead of an empty reset.
 
 Receipt logs remain private. Log sightings never authorize installation or become executable recipes. The beta does not start a service, register startup, accept installer agreements, bypass hashes, kill an installer, or silently retry a failed batch.
 

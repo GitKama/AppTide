@@ -68,17 +68,24 @@ pub fn read_log(directory: &Path, relative: &str) -> Result<String> {
     {
         return Err("Log must remain inside the AppTide data folder.".into());
     }
+    use std::io::{Seek, SeekFrom};
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    const LIMIT: u64 = 256 * 1024;
+    let tail = len > LIMIT && relative.ends_with(".jsonl");
+    if tail {
+        file.seek(SeekFrom::End(-(LIMIT as i64)))
+            .map_err(|e| e.to_string())?;
+    }
     let mut bytes = Vec::new();
-    fs::File::open(path)
-        .map_err(|e| e.to_string())?
-        .take(256 * 1024 + 1)
+    file.take(LIMIT)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    let truncated = bytes.len() > 256 * 1024;
-    bytes.truncate(256 * 1024);
     let mut text = String::from_utf8_lossy(&bytes).into_owned();
-    if truncated {
-        text.push_str("\n[Showing the first 256 KiB; full file remains on disk.]");
+    if tail {
+        text.insert_str(0, "[Latest 256 KiB; full file remains on disk.]\n");
+    } else if len > LIMIT {
+        text.push_str("\n[Showing first 256 KiB; full file remains on disk.]");
     }
     Ok(text)
 }
@@ -110,7 +117,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "apptide-log-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         record(&dir, "test", "line one\nline two").unwrap();
         let path = dir.join("logs/app.jsonl");
@@ -130,7 +137,7 @@ mod tests {
         assert!(
             read_log(&dir, "logs/app.jsonl")
                 .unwrap()
-                .ends_with("full file remains on disk.]")
+                .starts_with("[Latest 256 KiB")
         );
         record(&dir, "rotated", "new event").unwrap();
         assert_eq!(

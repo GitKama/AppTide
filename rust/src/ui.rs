@@ -2,7 +2,7 @@ use crate::{
     catalog::{App, Catalog, actionable, eligible},
     service::{Plan, Service},
 };
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, Stroke, Ui, Vec2};
+use eframe::egui::{self, FontId, Pos2, Rect, RichText, Stroke, Ui, Vec2};
 use std::{
     sync::{
         Arc,
@@ -11,20 +11,19 @@ use std::{
     },
     time::Duration,
 };
-const BG: Color32 = Color32::from_rgb(247, 249, 251);
-const NAV: Color32 = Color32::from_rgb(234, 240, 245);
-const INK: Color32 = Color32::from_rgb(36, 53, 74);
-const MUTED: Color32 = Color32::from_rgb(82, 102, 124);
-const TEAL: Color32 = Color32::from_rgb(7, 109, 114);
-const LINE: Color32 = Color32::from_rgb(220, 229, 237);
+mod theme;
+use theme::Palette;
+
 enum Command {
+    SetDarkMode(bool),
     Scan,
+    Verify,
+    Storage(Option<crate::storage::Preview>),
     RefreshSources,
     CheckStore,
     ApplyStore(crate::store::Check),
     Execute(Plan),
     Pause(String, bool),
-    Import,
     Watch(String, String),
     RefreshWatch(String),
     SelectAsset(String, u64),
@@ -38,6 +37,8 @@ enum Command {
     StartupCheck(bool),
 }
 enum Event {
+    Progress(String),
+    Storage(crate::storage::Preview),
     State(Box<Catalog>, Vec<String>, String),
     Done(std::result::Result<(), String>),
     SelfChecked(std::result::Result<Option<crate::self_update::Release>, String>),
@@ -99,6 +100,8 @@ pub struct Tide {
     restarting: bool,
     editor_save_rect: Option<Rect>,
     pub screenshot: Option<String>,
+    storage_preview: Option<crate::storage::Preview>,
+    pub ready_marker: Option<std::path::PathBuf>,
     frames: u32,
     screenshot_started: std::time::Instant,
     screenshot_requested: bool,
@@ -111,35 +114,7 @@ pub struct Tide {
     pub uninstall_rect: Option<Rect>,
     pub list_rect: Option<Rect>,
 }
-pub fn style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Light);
-    let mut visuals = egui::Visuals::light();
-    visuals.override_text_color = Some(INK);
-    visuals.panel_fill = BG;
-    visuals.window_fill = BG;
-    visuals.extreme_bg_color = Color32::WHITE;
-    visuals.selection.bg_fill = Color32::from_rgb(212, 233, 233);
-    visuals.selection.stroke = Stroke::new(1.0, TEAL);
-    visuals.widgets.inactive.bg_fill = Color32::WHITE;
-    visuals.widgets.inactive.weak_bg_fill = Color32::WHITE;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, LINE);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(226, 240, 241);
-    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(226, 240, 241);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, TEAL);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(212, 233, 233);
-    visuals.widgets.active.weak_bg_fill = Color32::from_rgb(212, 233, 233);
-    ctx.set_visuals(visuals);
-    ctx.style_mut_of(egui::Theme::Light, |s| {
-        s.spacing.item_spacing = Vec2::new(10.0, 10.0);
-        s.spacing.button_padding = Vec2::new(14.0, 9.0);
-        s.spacing.interact_size = Vec2::new(40.0, 36.0);
-        s.text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
-        s.text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
-        s.text_styles
-            .insert(egui::TextStyle::Heading, FontId::proportional(24.0));
-    });
+fn load_fonts(ctx: &egui::Context) {
     // Use the user's installed Windows typeface; do not redistribute Microsoft fonts.
     if let Ok(bytes) = std::fs::read("C:/Windows/Fonts/segoeui.ttf") {
         let mut fonts = egui::FontDefinitions::default();
@@ -178,6 +153,7 @@ impl Tide {
         }
     }
     fn store_page(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         let pending = self
             .catalog
             .receipts
@@ -185,7 +161,7 @@ impl Tide {
             .rev()
             .find(|r| r["provider"] == "Microsoft Store" && r["status"] == "pending");
         if let Some(r) = pending {
-            ui.colored_label(TEAL, "Updates are running in Microsoft Store");
+            ui.colored_label(colors.accent, "Updates are running in Microsoft Store");
             ui.label(
                 r["detail"]
                     .as_str()
@@ -214,8 +190,8 @@ impl Tide {
                     && check
                         .as_ref()
                         .is_some_and(|c| c.error.is_none() && !c.updates.is_empty()),
-                egui::Button::new(RichText::new("Update Store apps…").color(Color32::WHITE))
-                    .fill(TEAL),
+                egui::Button::new(RichText::new("Update Store apps…").color(colors.on_accent))
+                    .fill(colors.accent),
             );
             self.store_apply_rect = Some(button.rect);
             if button.clicked() {
@@ -231,7 +207,7 @@ impl Tide {
             return;
         };
         if let Some(error) = &check.error {
-            ui.colored_label(Color32::from_rgb(150, 80, 10), error);
+            ui.colored_label(colors.warning, error);
             return;
         }
         ui.label(
@@ -240,7 +216,7 @@ impl Tide {
                 check.updates.len(),
                 check.checked_at
             ))
-            .color(MUTED),
+            .color(colors.muted),
         );
         if check.updates.is_empty() {
             ui.heading("No Store updates reported");
@@ -272,13 +248,14 @@ impl Tide {
         }
     }
     fn steam_page(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         ui.horizontal_wrapped(|ui| {
             ui.label("Your Steam library, separate from desktop app updates.");
             if ui.button("Open Steam Downloads").clicked() && !self.demo {
                 open_steam(None);
             }
         });
-        ui.label(RichText::new("Build IDs and download state come from local Steam manifests. Steam checks availability and owns installation, updates and removal.").color(MUTED));
+        ui.label(RichText::new("Build IDs and download state come from local Steam manifests. Steam checks availability and owns installation, updates and removal.").color(colors.muted));
         ui.add_space(10.0);
         ui.add_sized(
             [ui.available_width(), 34.0],
@@ -321,7 +298,7 @@ impl Tide {
                     });
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(TEAL, crate::steam::version_label(a));
+                    ui.colored_label(colors.accent, crate::steam::version_label(a));
                     if let Some(s) = a.extra.get("steam") {
                         ui.label(s["status"].as_str().unwrap_or("Managed by Steam"));
                         if let Some(bytes) = s["sizeBytes"].as_u64() {
@@ -334,7 +311,7 @@ impl Tide {
                         egui::Label::new(
                             RichText::new(s["library"].as_str().unwrap_or(""))
                                 .small()
-                                .color(MUTED),
+                                .color(colors.muted),
                         )
                         .truncate(),
                     );
@@ -342,7 +319,7 @@ impl Tide {
                     ui.label(
                         RichText::new("Manifest not found; open Steam to check this installation.")
                             .small()
-                            .color(MUTED),
+                            .color(colors.muted),
                     );
                 }
                 ui.separator();
@@ -350,6 +327,7 @@ impl Tide {
         });
     }
     fn directory_page(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         let db = &*crate::community::DATABASE;
         ui.label(format!(
             "{} public package records · {} GitHub projects · Snapshot {}",
@@ -357,7 +335,7 @@ impl Tide {
             crate::community::repositories(),
             db.generated
         ));
-        ui.label(RichText::new("Recognition data from WinGet and Scoop. Entries can describe editions, tools or portable builds. Your installed versions come from this PC.").color(MUTED));
+        ui.label(RichText::new("Recognition data from WinGet and Scoop. Entries can describe editions, tools or portable builds. Your installed versions come from this PC.").color(colors.muted));
         ui.add_space(10.0);
         ui.add_sized(
             [ui.available_width(), 34.0],
@@ -407,7 +385,7 @@ impl Tide {
                 let e = entries[i];
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(e.names.first().unwrap_or(&e.id)).strong());
-                    ui.label(RichText::new(&e.source).small().color(MUTED));
+                    ui.label(RichText::new(&e.source).small().color(colors.muted));
                     if !e.repository.is_empty() && ui.link("GitHub project").clicked() {
                         open_url(&format!("https://github.com/{}", e.repository));
                     }
@@ -417,7 +395,8 @@ impl Tide {
                 });
                 ui.add(egui::Label::new(&e.id).truncate());
                 ui.add(
-                    egui::Label::new(RichText::new(&e.description).small().color(MUTED)).truncate(),
+                    egui::Label::new(RichText::new(&e.description).small().color(colors.muted))
+                        .truncate(),
                 );
                 ui.separator();
             }
@@ -484,7 +463,8 @@ impl Tide {
         }
     }
     pub fn new(service: Service, ctx: &egui::Context) -> Self {
-        style(ctx);
+        theme::apply(ctx, theme::dark_mode(&service.catalog.settings));
+        load_fonts(ctx);
         let catalog = service.catalog.clone();
         let demo = service.demo;
         let directory = service.directory.display().to_string();
@@ -532,6 +512,18 @@ impl Tide {
                 };
                 service.diagnostic("started", operation);
                 let result = match command {
+                    Command::Storage(reviewed) => (|| {
+                        if service.demo {
+                            return Err("Storage inspection requires a real catalogue.".into());
+                        }
+                        if let Some(p) = reviewed {
+                            crate::storage::clean(&service.directory, &p)?;
+                        }
+                        let p = crate::storage::preview(&service.directory)?;
+                        let _ = events.send(Event::Storage(p));
+                        Ok(())
+                    })(),
+                    Command::Verify => service.scan_inventory(false).map(|_| ()),
                     Command::Scan => {
                         service.cancel.store(false, Ordering::Relaxed);
                         if !service.demo {
@@ -547,9 +539,8 @@ impl Tide {
                     Command::CheckStore => service.check_store().map(|_| ()),
                     Command::RefreshSources => service.refresh_sources(),
                     Command::ApplyStore(preview) => service.execute_store(preview),
-                    Command::Execute(plan) => service.execute(plan, |phase, cat| {
-                        let _ =
-                            events.send(Event::State(Box::new(cat.clone()), vec![], phase.into()));
+                    Command::Execute(plan) => service.execute(plan, |phase, _| {
+                        let _ = events.send(Event::Progress(phase.into()));
                         context.request_repaint();
                     }),
                     Command::Pause(id, value) => {
@@ -558,7 +549,6 @@ impl Tide {
                         }
                         service.save()
                     }
-                    Command::Import => service.import_alpha(),
                     Command::Watch(id, repo) => service.watch(&id, &repo),
                     Command::SelectAsset(id, asset) => service
                         .catalog
@@ -592,6 +582,15 @@ impl Tide {
                         let _ = events.send(Event::SelfChecked(result));
                         Ok(())
                     }
+                    Command::SetDarkMode(enabled) => {
+                        let previous = service.catalog.settings.clone();
+                        service.catalog.settings["darkMode"] = enabled.into();
+                        let result = service.save();
+                        if result.is_err() {
+                            service.catalog.settings = previous;
+                        }
+                        result
+                    }
                     Command::StartupCheck(enabled) => {
                         service.catalog.settings["checkAppTideAtStartup"] = enabled.into();
                         service.save()
@@ -609,9 +608,8 @@ impl Tide {
                             )
                         }
                     }
-                    Command::Automatic => service.automatic(|phase, cat| {
-                        let _ =
-                            events.send(Event::State(Box::new(cat.clone()), vec![], phase.into()));
+                    Command::Automatic => service.automatic(|phase, _| {
+                        let _ = events.send(Event::Progress(phase.into()));
                         context.request_repaint();
                     }),
                 };
@@ -681,6 +679,8 @@ impl Tide {
             restarting: false,
             editor_save_rect: None,
             screenshot: None,
+            ready_marker: None,
+            storage_preview: None,
             frames: 0,
             screenshot_started: std::time::Instant::now(),
             screenshot_requested: false,
@@ -728,14 +728,15 @@ impl Tide {
         }
     }
     fn app_update_notice(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         self.own_update_rect = None;
         if let Some(release) = self.own_release.clone() {
-            egui::Frame::new().fill(NAV).inner_margin(12.0).show(ui, |ui| {
+            egui::Frame::new().fill(colors.sidebar).inner_margin(12.0).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("AppTide {} is available", release.version)).strong().color(TEAL));
+                    ui.label(RichText::new(format!("AppTide {} is available", release.version)).strong().color(colors.accent));
                     let button = ui.add_enabled(!self.busy && !self.demo && !self.restarting,
-                        egui::Button::new(RichText::new("Update and restart").color(Color32::WHITE)).fill(TEAL));
+                        egui::Button::new(RichText::new("Update and restart").color(colors.on_accent)).fill(colors.accent));
                     self.own_update_rect = Some(button.rect);
                     if button.clicked() {
                         self.send(Command::InstallSelf(release), "Downloading and verifying AppTide…");
@@ -749,7 +750,11 @@ impl Tide {
                 if self.own_checking {
                     ui.spinner();
                 }
-                ui.label(RichText::new(&self.own_status).size(12.0).color(MUTED));
+                ui.label(
+                    RichText::new(&self.own_status)
+                        .size(12.0)
+                        .color(colors.muted),
+                );
                 if ui
                     .add_enabled(
                         !self.busy && !self.own_checking,
@@ -764,6 +769,7 @@ impl Tide {
         }
     }
     fn nav(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
@@ -774,18 +780,18 @@ impl Tide {
                 r.center_top() + Vec2::new(4.0, 3.0),
                 r.right_bottom() + Vec2::new(-2.0, -5.0),
             ];
-            p.add(egui::Shape::line(points, Stroke::new(2.0, TEAL)));
+            p.add(egui::Shape::line(points, Stroke::new(2.0, colors.accent)));
             p.line_segment(
                 [
                     r.left_bottom() + Vec2::new(9.0, -6.0),
                     r.right_bottom() + Vec2::new(-8.0, -4.0),
                 ],
-                Stroke::new(2.0, TEAL),
+                Stroke::new(2.0, colors.accent),
             );
             ui.label(RichText::new("AppTide").size(23.0).strong());
         });
         ui.add_space(8.0);
-        ui.colored_label(TEAL, concat!("Rust ", env!("CARGO_PKG_VERSION")));
+        ui.colored_label(colors.accent, concat!("Rust ", env!("CARGO_PKG_VERSION")));
         ui.add_space(30.0);
         let count = self.catalog.apps.values().filter(|a| eligible(a)).count();
         for (page, label) in [
@@ -799,14 +805,17 @@ impl Tide {
             (Page::Settings, "Settings".into()),
         ] {
             let selected = self.page == page;
-            let b =
-                egui::Button::new(RichText::new(label).color(if selected { TEAL } else { INK }))
-                    .fill(if selected {
-                        Color32::from_rgb(211, 230, 232)
-                    } else {
-                        NAV
-                    })
-                    .stroke(Stroke::NONE);
+            let b = egui::Button::new(RichText::new(label).color(if selected {
+                colors.accent
+            } else {
+                colors.text
+            }))
+            .fill(if selected {
+                colors.selected
+            } else {
+                colors.sidebar
+            })
+            .stroke(Stroke::NONE);
             if ui.add_sized([170.0, 38.0], b).clicked() {
                 self.page = page;
                 self.query.clear();
@@ -816,16 +825,17 @@ impl Tide {
             ui.label(
                 RichText::new("Free. Open source. Yours.")
                     .size(12.0)
-                    .color(MUTED),
+                    .color(colors.muted),
             );
             ui.label(
                 RichText::new("Your catalogue stays here.")
                     .size(12.0)
-                    .color(MUTED),
+                    .color(colors.muted),
             );
         });
     }
     fn detail(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         let Some(a) = self
             .selected
             .as_ref()
@@ -846,25 +856,25 @@ impl Tide {
                 } else {
                     &a.publisher
                 })
-                .color(MUTED),
+                .color(colors.muted),
             )
             .truncate(),
         )
         .on_hover_text(&a.publisher);
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Installed").color(MUTED));
+            ui.label(RichText::new("Installed").color(colors.muted));
             ui.label(RichText::new(crate::steam::version_label(&a)).strong());
         });
         if !a.available.is_empty() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Available").color(MUTED));
-                ui.colored_label(TEAL, &a.available);
+                ui.label(RichText::new("Available").color(colors.muted));
+                ui.colored_label(colors.accent, &a.available);
             });
         } else if let Some(tag) = a.extra.get("watch").and_then(|w| w["latest"].as_str()) {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Release tag").color(MUTED));
-                ui.colored_label(TEAL, tag);
+                ui.label(RichText::new("Release tag").color(colors.muted));
+                ui.colored_label(colors.accent, tag);
             });
         }
         ui.add_space(10.0);
@@ -885,9 +895,9 @@ impl Tide {
                 } else {
                     "Update this app"
                 })
-                .color(Color32::WHITE),
+                .color(colors.on_accent),
             )
-            .fill(TEAL)
+            .fill(colors.accent)
             .min_size(Vec2::new(ui.available_width(), 40.0)),
         );
         self.update_rect = Some(update.rect);
@@ -904,7 +914,7 @@ impl Tide {
         }
         let remove = ui.add_enabled(
             !self.busy && actionable(&a),
-            egui::Button::new(RichText::new("Uninstall app").color(Color32::from_rgb(163, 42, 52)))
+            egui::Button::new(RichText::new("Uninstall app").color(colors.danger))
                 .min_size(Vec2::new(ui.available_width(), 38.0)),
         );
         self.uninstall_rect = Some(remove.rect);
@@ -921,7 +931,7 @@ impl Tide {
                     "Use the update route below. Removal is available in Windows Settings."
                 })
                 .size(12.0)
-                .color(MUTED),
+                .color(colors.muted),
             );
             if ui.button("Open Windows installed apps").clicked() {
                 open_settings();
@@ -938,14 +948,14 @@ impl Tide {
         }
         scroll.show(ui,|ui|{
             if let Some(r)=self.catalog.receipts.iter().rev().find(|r|r["appId"]==a.uid) && ["failed","unverified"].contains(&r["status"].as_str().unwrap_or("")) {
-                ui.colored_label(Color32::from_rgb(150,80,10),"Last update needs attention");
+                ui.colored_label(colors.warning,"Last update needs attention");
                 ui.label(r["exitCode"].as_i64().and_then(|c|crate::winget::failure_hint(c as i32)).unwrap_or_else(||r["detail"].as_str().unwrap_or("Open Activity for details.")));
                 if ui.link("View update history and logs").clicked(){self.page=Page::Activity;}
                 ui.separator();
             }
             let mut automatic=a.auto_update && a.extra.get("automaticConsent")==Some(&serde_json::json!(2)) && (actionable(&a) || crate::github_update::automatic_allowed(&a));
             if ui.add_enabled(!self.busy && (actionable(&a) || crate::github_update::consent_key(&a).is_some()),egui::Checkbox::new(&mut automatic,"Allow automatic updates")).changed(){self.send(Command::AutoPreference(Some(a.uid.clone()),automatic),"Saving automatic update choice…");}
-            ui.label(RichText::new("Also requires the global switch in Settings.").small().color(MUTED));
+            ui.label(RichText::new("Also requires the global switch in Settings.").small().color(colors.muted));
             ui.add_space(12.0);ui.label(RichText::new("GitHub updates").strong());
             if let Some(c)=a.extra.get("community") {field(ui,"Public catalogue match",c["id"].as_str().unwrap_or(""));field(ui,"Match evidence",c["evidence"].as_str().unwrap_or(""));}
             if self.watch_app!=a.uid {self.watch_app=a.uid.clone();self.watch_input=crate::releases::repository(&a).unwrap_or("").into();}
@@ -954,14 +964,14 @@ impl Tide {
                 if ui.add_enabled(!self.busy,egui::Button::new("Connect project")).clicked(){self.send(Command::Watch(a.uid.clone(),self.watch_input.clone()),"Saving and checking release watch…");}
                 if ui.add_enabled(!self.busy && crate::releases::repository(&a).is_some(),egui::Button::new("Refresh")).clicked(){self.send(Command::RefreshWatch(a.uid.clone()),"Checking stable release…");}
             });
-            ui.label(RichText::new("Compatible installers update here. Archives and unsupported releases open on GitHub.").small().color(MUTED));
+            ui.label(RichText::new("Compatible installers update here. Archives and unsupported releases open on GitHub.").small().color(colors.muted));
             let choices=crate::github_update::candidates(&a);
             if a.winget_id.is_none() && !choices.is_empty() {
                 let chosen=crate::github_update::offer(&a);
                 if choices.len()>1 {
                     egui::ComboBox::from_id_salt(("github_asset",&a.uid)).selected_text(chosen.as_ref().map(|o|o.name.as_str()).unwrap_or("Choose Windows installer")).width(ui.available_width().min(300.0)).show_ui(ui,|ui|{for o in &choices {if ui.add_enabled(!self.busy,egui::Button::new(&o.name)).clicked(){self.send(Command::SelectAsset(a.uid.clone(),o.id),"Saving installer choice…");}}});
                 }
-                if let Some(o)=chosen {field(ui,"Installer",&o.name);field(ui,"Installer version",&o.version);ui.label(RichText::new(if o.mode=="interactive" || o.mode=="msi" {"Windows setup may ask you to finish installation."}else{"Reviewed installer: supports unattended updates."}).small().color(MUTED));}
+                if let Some(o)=chosen {field(ui,"Installer",&o.name);field(ui,"Installer version",&o.version);ui.label(RichText::new(if o.mode=="interactive" || o.mode=="msi" {"Windows setup may ask you to finish installation."}else{"Reviewed installer: supports unattended updates."}).small().color(colors.muted));}
             } else if a.winget_id.is_some() {ui.label("WinGet is the preferred update route for this app.");}
             else if a.extra.get("watch").is_some_and(|w|w["assets"].is_array()) {ui.label("No compatible installer with a GitHub SHA256 digest. Open releases to review other formats.");}
             if let Some(w)=a.extra.get("watch") {if let Some(e)=w["error"].as_str(){ui.label(e);}field(ui,"Project detected from",w["association"].as_str().map(|s|match s{"installed-metadata"=>"Installed app metadata","bundled-recipe"=>"Reviewed product recipe","public-catalogue"=>"Public catalogue identity",_=>"Your project choice"}).unwrap_or("Not connected"));field(ui,"Release comparison",w["status"].as_str().unwrap_or("Not checked"));if let Some(v)=w["latest"].as_str(){field(ui,"Latest stable tag",v);}
@@ -989,14 +999,15 @@ impl Tide {
             let mut excluded=a.excluded;if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut excluded,"Pause updates for this app")).changed(){self.send(Command::Pause(a.uid.clone(),excluded),"Saving preference…");}
             ui.add_space(12.0);field(ui,"Update source",a.winget_id.as_deref().unwrap_or("Not matched"));field(ui,"Evidence",&a.evidence);
             field(ui,"Local knowledge",&format!("{} scans · {} log sightings",a.observations,a.log_mentions));
-            if let Some(l)=a.extra.get("learning"){ui.label(RichText::new(format!("{} versions / {} verified operations",l["versionSightings"],l["verifiedOperations"])).small().color(MUTED));}
+            if let Some(l)=a.extra.get("learning"){ui.label(RichText::new(format!("{} versions / {} verified operations",l["versionSightings"],l["verifiedOperations"])).small().color(colors.muted));}
             if let Some(notice)=a.extra.get("identityNotice").and_then(|v|v.as_str()){ui.label(notice);}
 
-            ui.add_space(8.0);ui.label(RichText::new("Observed versions").strong());for v in a.versions.iter().rev(){ui.horizontal(|ui|{ui.label(&v.version);ui.label(RichText::new(v.seen_at.get(..10).unwrap_or(&v.seen_at)).size(12.0).color(MUTED));});}
+            ui.add_space(8.0);ui.label(RichText::new("Observed versions").strong());for v in a.versions.iter().rev(){ui.horizontal(|ui|{ui.label(&v.version);ui.label(RichText::new(v.seen_at.get(..10).unwrap_or(&v.seen_at)).size(12.0).color(colors.muted));});}
             if !a.location.is_empty(){ui.add_space(8.0);field(ui,"Location",&a.location);}
         });
     }
     fn apps(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         ui.horizontal(|ui| {
             ui.add_sized(
                 [ui.available_width() - 165.0, 36.0],
@@ -1069,7 +1080,7 @@ impl Tide {
             ui.label(
                 RichText::new(format!("{} app records", apps.len()))
                     .size(12.0)
-                    .color(MUTED),
+                    .color(colors.muted),
             );
         });
         ui.separator();
@@ -1082,7 +1093,7 @@ impl Tide {
             } else {
                 "No updates in this view"
             });
-            ui.label(if self.catalog.scans==0{"Check for updates to build your private catalogue, or import your alpha catalogue in Settings."}else{"Only apps with a known update source can report updates. Check Installed apps for coverage."});
+            ui.label(if self.catalog.scans==0{"Check for updates to build your private catalogue."}else{"Only apps with a known update source can report updates. Check Installed apps for coverage."});
             return;
         }
         let mut scroll = egui::ScrollArea::vertical()
@@ -1106,6 +1117,7 @@ impl Tide {
         self.list_rect = Some(output.inner_rect);
     }
     fn activity(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         let button = ui.button("View local logs");
         self.logs_rect = Some(button.rect);
         if button.clicked() {
@@ -1126,6 +1138,12 @@ impl Tide {
             ui.heading("A history you can check.");
             ui.label("Updates and removals will appear here with their verification result.");
         }
+        if ui
+            .add_enabled(!self.busy, egui::Button::new("Verify again"))
+            .clicked()
+        {
+            self.send(Command::Verify, "Checking installed versions…");
+        }
         let receipts: Vec<_> = self
             .catalog
             .receipts
@@ -1134,45 +1152,99 @@ impl Tide {
             .take(100)
             .cloned()
             .collect();
+        let failure_key = |r: &serde_json::Value| {
+            serde_json::json!([
+                r["appId"],
+                r["provider"],
+                r["kind"],
+                r["target"],
+                r["exitCode"]
+            ])
+            .to_string()
+        };
+        let mut repeats = std::collections::HashMap::new();
+        for r in receipts.iter().filter(|r| r["status"] == "failed") {
+            *repeats.entry(failure_key(r)).or_insert(0usize) += 1;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
             for r in &receipts {
+                if r["status"] == "failed" {
+                    let Some(count) = repeats.remove(&failure_key(r)) else {
+                        continue;
+                    };
+                    if count > 1 {
+                        ui.label(format!(
+                            "{count} failed attempts for this target · latest attempt below"
+                        ));
+                    }
+                }
                 ui.label(RichText::new(r["name"].as_str().unwrap_or("App")).strong());
                 ui.horizontal(|ui| {
                     ui.label(r["kind"].as_str().unwrap_or(""));
                     ui.colored_label(
                         if r["status"] == "verified" {
-                            TEAL
+                            colors.accent
                         } else {
-                            Color32::from_rgb(150, 80, 10)
+                            colors.warning
                         },
                         r["status"].as_str().unwrap_or(""),
                     );
                     ui.label(r["startedAt"].as_str().unwrap_or(""));
                 });
+                if let Some(review) = r["laterReview"].as_str() {
+                    ui.label(review);
+                }
+                if let Some(v) = r.get("laterObservation") {
+                    ui.label(format!(
+                        "Confirmed later at {} · {} ({})",
+                        v["at"].as_str().unwrap_or(""),
+                        v["version"].as_str().unwrap_or(""),
+                        v["source"].as_str().unwrap_or("inventory")
+                    ));
+                }
+                if let Some(target) = r["target"].as_str() {
+                    ui.label(format!(
+                        "Before {} · Target {} · Observed {}",
+                        r["before"].as_str().unwrap_or("—"),
+                        target,
+                        r["after"].as_str().unwrap_or("—")
+                    ));
+                }
                 ui.label(r["detail"].as_str().unwrap_or(""));
                 if ["failed", "unverified"].contains(&r["status"].as_str().unwrap_or("")) {
                     if let Some(hint) = r["exitCode"]
                         .as_i64()
                         .and_then(|c| crate::winget::failure_hint(c as i32))
                     {
-                        ui.label(RichText::new(hint).color(MUTED));
+                        ui.label(RichText::new(hint).color(colors.muted));
                     }
                     if let Some(a) = r["appId"]
                         .as_str()
                         .and_then(|id| self.catalog.apps.get(id))
-                        .filter(|a| eligible(a))
+                        .filter(|a| {
+                            r["provider"] == "WinGet"
+                                && a.winget_id.as_deref() == r["packageId"].as_str()
+                                && a.winget_id.is_some()
+                        })
                     {
                         let id = a.uid.clone();
-                        if ui
-                            .add_enabled(
-                                !self.busy,
-                                egui::Button::new("Review retry with installer prompts"),
-                            )
-                            .clicked()
+                        let retry = match r["kind"].as_str() {
+                            Some("update") if eligible(a) => {
+                                Some(("update", "Review retry with installer prompts"))
+                            }
+                            Some("uninstall") if actionable(a) && r["before"] == a.version => {
+                                Some(("uninstall", "Review uninstall again"))
+                            }
+                            _ => None,
+                        };
+                        if let Some((kind, label)) = retry
+                            && ui
+                                .add_enabled(!self.busy, egui::Button::new(label))
+                                .clicked()
                         {
-                            self.prepare("update", vec![id]);
-                            if let Some(p) = &mut self.plan {
-                                p.interactive = true;
+                            self.prepare(kind, vec![id]);
+                            if let Some(plan) = &mut self.plan {
+                                plan.interactive = kind == "update";
                             }
                         }
                     }
@@ -1184,8 +1256,27 @@ impl Tide {
                         code as u32
                     ));
                 }
-                if let Some(file) = r["logFile"].as_str() {
-                    ui.label(format!("Output: receipts/{file}"));
+                if let Some(file) = r["logFile"].as_str()
+                    && ui.button("Open this output log").clicked()
+                {
+                    if self.demo {
+                        self.show_logs();
+                    } else {
+                        let name = format!("receipts/{file}");
+                        match crate::diagnostics::read_log(
+                            std::path::Path::new(&self.directory),
+                            &name,
+                        ) {
+                            Ok(text) => {
+                                self.log_viewer = Some(LogViewer {
+                                    files: vec![name],
+                                    selected: 0,
+                                    text,
+                                })
+                            }
+                            Err(e) => self.error = Some(e),
+                        }
+                    }
                 }
                 ui.separator();
             }
@@ -1193,13 +1284,28 @@ impl Tide {
     }
     fn settings(&mut self, ui: &mut Ui) {
         egui::ScrollArea::vertical().show(ui,|ui|{
+        ui.heading("Appearance");
+        let mut dark = theme::dark_mode(&self.catalog.settings);
+        if ui.add_enabled(!self.busy, egui::Checkbox::new(&mut dark, "Dark mode")).changed() {
+            self.send(Command::SetDarkMode(dark), "Saving appearance…");
+        }
+        ui.add_space(18.0);
         ui.heading("AppTide updates");ui.label(&self.own_status);
         let mut startup=self.catalog.settings["checkAppTideAtStartup"]!=false;
         if ui.add_enabled(!self.busy,egui::Checkbox::new(&mut startup,"Check GitHub when AppTide opens")).changed(){self.send(Command::StartupCheck(startup),"Saving startup check preference...");}
         if ui.add_enabled(!self.busy && !self.demo,egui::Button::new("Check AppTide version")).clicked(){self.send(Command::CheckSelf,"Checking AppTide releases...");}
         ui.label("Beta channel. Downloads are verified against GitHub's SHA-256 digest. Updating restarts AppTide, keeps a backup of the old package files, and leaves your catalogue in place.");ui.add_space(18.0);
-        ui.heading("Your private catalogue");ui.label("The Rust beta uses a separate catalogue. Import copies your alpha history and preferences; the original stays in place.");
-        if ui.add_enabled(!self.busy&&self.catalog.apps.is_empty()&&!self.demo,egui::Button::new("Import alpha catalogue")).clicked(){self.send(Command::Import,"Importing catalogue…");}
+        ui.heading("Local storage");
+        if ui.add_enabled(!self.demo && !self.busy,egui::Button::new("Inspect cache and history")).clicked(){self.send(Command::Storage(None),"Measuring private files…");}
+        if let Some(p)=&self.storage_preview {
+            let mib=|n:u64|n as f64 / 1_048_576.0;
+            ui.label(format!("Downloads {:.1} MiB · Self-updates {:.1} MiB · Logs and receipts {:.1} MiB",mib(p.downloads),mib(p.updates),mib(p.history)));
+            ui.label("Cleanup covers installer downloads and completed update archives older than seven days. Rollback copies and history stay available.");
+            if ui.add_enabled(!self.busy && p.count()>0,egui::Button::new(format!("Remove {} reviewed cache files ({:.1} MiB)",p.count(),mib(p.bytes())))).clicked(){
+                let preview=self.storage_preview.take();self.send(Command::Storage(preview),"Cleaning reviewed files…");
+            }
+        }
+        ui.heading("Your private catalogue");ui.label("Your history, preferences and operation receipts are saved locally.");
         ui.add_space(12.0);field(ui,"Data folder",&self.directory);ui.add_space(20.0);ui.heading("This beta's scope");
         ui.label("Reviewed public recipes identify update owners and release sources. Your installed inventory, histories and receipts stay on this PC. Unknown apps remain research candidates; observations never authorize arbitrary installers.");
         ui.add_space(16.0);ui.heading("Automatic updates while open");
@@ -1217,9 +1323,15 @@ impl Tide {
     });
     }
     pub fn draw(&mut self, ui: &mut Ui) {
+        let colors = Palette::for_mode(ui.visuals().dark_mode);
         while let Ok(event) = self.rx.try_recv() {
             match event {
+                Event::Storage(preview) => self.storage_preview = Some(preview),
+                Event::Progress(phase) => self.phase = phase,
                 Event::State(cat, warnings, phase) => {
+                    if theme::dark_mode(&cat.settings) != theme::dark_mode(&self.catalog.settings) {
+                        theme::apply(ui.ctx(), theme::dark_mode(&cat.settings));
+                    }
                     self.catalog = *cat;
                     self.warnings = warnings;
                     self.phase = phase;
@@ -1283,12 +1395,12 @@ impl Tide {
             self.error=Some("Wait for the current operation to finish before closing. Stop queue skips remaining apps.".into());
         }
         let rect = ui.max_rect();
-        ui.painter().rect_filled(rect, 0, BG);
+        ui.painter().rect_filled(rect, 0, colors.canvas);
         let nav = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + 205.0, rect.max.y));
-        ui.painter().rect_filled(nav, 0, NAV);
+        ui.painter().rect_filled(nav, 0, colors.sidebar);
         ui.painter().line_segment(
             [nav.right_top(), nav.right_bottom()],
-            Stroke::new(1.0, LINE),
+            Stroke::new(1.0, colors.line),
         );
         ui.scope_builder(
             egui::UiBuilder::new().max_rect(nav.shrink2(Vec2::new(17.0, 22.0))),
@@ -1299,26 +1411,26 @@ impl Tide {
             rect.max - Vec2::new(28.0, 18.0),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(content),|ui|{
-            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Store=>"Microsoft Store",Page::Steam=>"Steam library",Page::Directory=>"App directory",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(MUTED));});
+            ui.horizontal(|ui|{ui.vertical(|ui|{ui.heading(RichText::new(match self.page{Page::Updates=>"Updates",Page::Store=>"Microsoft Store",Page::Steam=>"Steam library",Page::Directory=>"App directory",Page::Installed=>"Installed apps",Page::Catalogue=>"My catalogue",Page::Activity=>"Activity",Page::Settings=>"Settings"}).size(30.0));ui.label(RichText::new("A little maintenance. Everything in one place.").color(colors.muted));});
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if self.page==Page::Catalogue && ui.add_enabled(!self.busy,egui::Button::new("Add custom app")).clicked(){self.source_editor=Some(SourceEditor{id:None,manual:true,name:String::new(),source:Default::default(),error:None});}
-                    if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();let button=ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(Color32::WHITE)).fill(TEAL));self.update_all_rect=Some(button.rect);if button.clicked(){self.prepare("update",ids);}}
+                    if self.page==Page::Updates{let ids:Vec<_>=self.catalog.apps.values().filter(|a|eligible(a)).map(|a|a.uid.clone()).collect();let button=ui.add_enabled(!self.busy&&!ids.is_empty(),egui::Button::new(RichText::new(format!("Update all ({})",ids.len())).color(colors.on_accent)).fill(colors.accent));self.update_all_rect=Some(button.rect);if button.clicked(){self.prepare("update",ids);}}
                     if self.page!=Page::Store && ui.add_enabled(!self.busy,egui::Button::new("Check for updates")).clicked(){self.send(Command::Scan,"Reading installed software and WinGet sources…");}
                 });
             });ui.add_space(18.0);
             self.app_update_notice(ui);
-            if self.demo{ui.colored_label(TEAL,"DEMO  ·  Synthetic apps. Update and uninstall actions are simulated.");}
-            if let Some(error)=&self.error{ui.colored_label(Color32::from_rgb(161,43,42),error);}
+            if self.demo{ui.colored_label(colors.accent,"DEMO  ·  Synthetic apps. Update and uninstall actions are simulated.");}
+            if let Some(error)=&self.error{ui.colored_label(colors.danger,error);}
             if !self.busy && let Some(batch)=self.catalog.extra.get("lastBatch") {
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(if batch["status"]=="complete" {TEAL} else {Color32::from_rgb(137,80,14)}, batch["summary"].as_str().unwrap_or("Previous queue needs review."));
+                    ui.colored_label(if batch["status"]=="complete" {colors.accent} else {colors.warning}, batch["summary"].as_str().unwrap_or("Previous queue needs review."));
                     if ui.link("View Activity").clicked() { self.page=Page::Activity; }
                 });
                 if self.page==Page::Activity && let Some(detail)=batch["detail"].as_str() && !detail.is_empty() {ui.label(detail);}
             }
-            for warning in &self.warnings{ui.colored_label(Color32::from_rgb(137,80,14),RichText::new(warning).size(12.0));}
+            for warning in &self.warnings{ui.colored_label(colors.warning,RichText::new(warning).size(12.0));}
             if self.busy {ui.horizontal(|ui|{ui.spinner();ui.label(&self.phase);if !self.phase.starts_with("Microsoft Store is updating") && ui.button("Stop queue").clicked(){self.cancel.store(true,Ordering::Relaxed);}});}
             let learned=self.catalog.apps.values().filter(|a|a.present && a.winget_id.is_none() && a.knowledge.is_some()).count();let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
-            ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} WinGet / {learned} other known routes  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(MUTED));});ui.separator();ui.add_space(10.0);
+            ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} WinGet / {learned} other known routes  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(colors.muted));});ui.separator();ui.add_space(10.0);
             if self.page==Page::Updates {
                 ui.horizontal_wrapped(|ui| {
                     let count=self.catalog.extra.get("storeCheck").and_then(|v|v["updates"].as_array()).map(Vec::len);
@@ -1330,7 +1442,7 @@ impl Tide {
             if self.page==Page::Steam {self.steam_page(ui);}else if self.page==Page::Directory {self.directory_page(ui);}else if self.page==Page::Store {self.store_page(ui);}else if matches!(self.page,Page::Activity){self.activity(ui);}else if self.page==Page::Settings{self.settings(ui);}else{
                 let body=ui.available_rect_before_wrap();let details_width=290.0;let split=body.right()-details_width-20.0;
                 let list=Rect::from_min_max(body.min,Pos2::new(split-20.0,body.bottom()));let detail=Rect::from_min_max(Pos2::new(split+20.0,body.top()+2.0),body.max);
-                ui.painter().line_segment([Pos2::new(split,body.top()),Pos2::new(split,body.bottom())],Stroke::new(1.0,LINE));
+                ui.painter().line_segment([Pos2::new(split,body.top()),Pos2::new(split,body.bottom())],Stroke::new(1.0,colors.line));
                 ui.scope_builder(egui::UiBuilder::new().max_rect(list),|ui|{ui.set_clip_rect(list);self.apps(ui);});
                 ui.scope_builder(egui::UiBuilder::new().max_rect(detail),|ui|{ui.set_clip_rect(detail);self.detail(ui);});
             }
@@ -1410,7 +1522,7 @@ impl Tide {
                 ui.label("How to update / your notes");ui.add(egui::TextEdit::multiline(&mut editor.source.instructions).desired_rows(4).desired_width(f32::INFINITY));
                 ui.label("Sources open in your browser. Notes are never executed as commands.");
                 });
-                if let Some(e)=&editor.error {ui.colored_label(Color32::DARK_RED,e);}
+                if let Some(e)=&editor.error {ui.colored_label(colors.danger,e);}
                 ui.horizontal(|ui|{let button=ui.button("Save to my catalogue");self.editor_save_rect=Some(button.rect);save=button.clicked();cancel=ui.button("Cancel").clicked();});
             });
             if save {
@@ -1482,6 +1594,17 @@ impl Tide {
             }
         }
         self.frames += 1;
+        if self.ready_marker.is_some() {
+            if self.frames >= 2 {
+                if let Some(marker) = self.ready_marker.take()
+                    && let Err(e) = std::fs::write(marker, std::process::id().to_string())
+                {
+                    self.error = Some(format!("Could not acknowledge startup: {e}"));
+                }
+            } else {
+                ctx.request_repaint();
+            }
+        }
         if self.restarting && !self.busy {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -1536,11 +1659,13 @@ impl eframe::App for Tide {
     }
 }
 fn field(ui: &mut Ui, label: &str, value: &str) {
-    ui.label(RichText::new(label).size(12.0).color(MUTED));
+    let colors = Palette::for_mode(ui.visuals().dark_mode);
+    ui.label(RichText::new(label).size(12.0).color(colors.muted));
     ui.add(egui::Label::new(value).wrap());
     ui.add_space(8.0);
 }
 fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
+    let colors = Palette::for_mode(ui.visuals().dark_mode);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 66.0), egui::Sense::click());
     response.widget_info(|| {
@@ -1552,9 +1677,9 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
             rect,
             5,
             if selected {
-                Color32::from_rgb(224, 238, 240)
+                colors.selected
             } else {
-                Color32::from_rgb(236, 242, 246)
+                colors.hover
             },
         );
     }
@@ -1562,18 +1687,18 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
         p.rect_stroke(
             rect.shrink(1.0),
             5,
-            Stroke::new(1.5, TEAL),
+            Stroke::new(1.5, colors.accent),
             egui::StrokeKind::Inside,
         );
     }
     let icon = Rect::from_min_size(rect.min + Vec2::new(12.0, 13.0), Vec2::splat(38.0));
-    p.rect_filled(icon, 8, Color32::from_rgb(233, 239, 243));
+    p.rect_filled(icon, 8, colors.icon);
     p.text(
         icon.center(),
         egui::Align2::CENTER_CENTER,
         a.name.chars().next().unwrap_or('A'),
         FontId::proportional(18.0),
-        TEAL,
+        colors.accent,
     );
     let name_width = (rect.width() - 260.0).max(60.0);
     let name_rect = Rect::from_min_size(
@@ -1586,7 +1711,7 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
         egui::Align2::LEFT_TOP,
         &a.name,
         FontId::proportional(15.0),
-        INK,
+        colors.text,
     );
     let sub = if a.publisher.is_empty() {
         a.winget_id.as_deref().unwrap_or("Windows inventory")
@@ -1602,14 +1727,14 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
         egui::Align2::LEFT_TOP,
         sub,
         FontId::proportional(12.0),
-        MUTED,
+        colors.muted,
     );
     p.text(
         Pos2::new(rect.right() - 174.0, rect.top() + 13.0),
         egui::Align2::LEFT_TOP,
         crate::steam::version_label(a),
         FontId::proportional(12.0),
-        INK,
+        colors.text,
     );
     if !a.available.is_empty() {
         p.text(
@@ -1617,10 +1742,12 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
             egui::Align2::LEFT_TOP,
             format!("to {}", a.available),
             FontId::proportional(11.0),
-            TEAL,
+            colors.accent,
         );
     }
-    let status = if !a.present {
+    let status = if a.extra.get("wingetStale") == Some(&serde_json::Value::Bool(true)) {
+        "WinGet data stale"
+    } else if !a.present {
         "Not present"
     } else if a.protected {
         "Protected"
@@ -1642,11 +1769,15 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
         egui::Align2::RIGHT_CENTER,
         status,
         FontId::proportional(11.0),
-        if eligible(a) { TEAL } else { MUTED },
+        if eligible(a) {
+            colors.accent
+        } else {
+            colors.muted
+        },
     );
     p.line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(1.0, LINE),
+        Stroke::new(1.0, colors.line),
     );
     response.on_hover_text(&a.name)
 }
@@ -1698,6 +1829,47 @@ fn open_project() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dark_default_and_saved_light_choice_survive_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "apptide-appearance-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let mut service = Service::open(dir.clone(), false).unwrap();
+        service.catalog.settings["checkAppTideAtStartup"] = false.into();
+        service.save().unwrap();
+        let ctx = egui::Context::default();
+        let mut app = Tide::new(service, &ctx);
+        assert!(ctx.global_style().visuals.dark_mode);
+        app.send(Command::SetDarkMode(false), "Saving appearance");
+        for _ in 0..100 {
+            frame(&mut app, &ctx, Vec2::new(1040.0, 650.0), vec![]);
+            if !app.busy {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app.busy && app.error.is_none());
+        assert!(!ctx.global_style().visuals.dark_mode);
+        let saved = Catalog::load(&dir.join("catalog.json")).unwrap();
+        assert_eq!(saved.settings["darkMode"], false);
+        assert_eq!(saved.settings["checkAppTideAtStartup"], false);
+        let mut reopened = Service::open(Default::default(), true).unwrap();
+        reopened.catalog = saved;
+        let fresh_ctx = egui::Context::default();
+        let _reopened = Tide::new(reopened, &fresh_ctx);
+        assert!(!fresh_ctx.global_style().visuals.dark_mode);
+        drop(app);
+        // The worker owns the lock until it sees the disconnected channel.
+        for _ in 0..100 {
+            if Service::open(dir.clone(), false).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn self_update_is_visible_on_every_page_and_waits_for_running_operations() {
         for size in [Vec2::new(1040.0, 650.0), Vec2::new(1440.0, 900.0)] {
@@ -1919,7 +2091,7 @@ mod tests {
         let directory = std::env::temp_dir().join(format!(
             "apptide-log-viewer-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         std::fs::create_dir_all(directory.join("receipts")).unwrap();
         let path = directory.join("receipts/download.log");

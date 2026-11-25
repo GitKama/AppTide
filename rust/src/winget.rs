@@ -14,7 +14,7 @@ pub fn valid_id(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
         && !s.contains("...")
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Row {
     pub name: String,
     pub id: String,
@@ -33,17 +33,50 @@ pub fn parse(text: &str) -> Result<(Vec<Row>, usize)> {
         return Err("WinGet table has no header.".into());
     }
     let split = Regex::new(r"\s{2,}").unwrap();
-    let columns = split.split(lines[separator - 1].trim()).count();
+    let header = lines[separator - 1].trim();
+    let starts: Vec<_> = std::iter::once(0)
+        .chain(split.find_iter(header).map(|m| m.end()))
+        .collect();
+    let columns = starts.len();
     if !(3..=5).contains(&columns) {
         return Err("Unsupported WinGet table layout.".into());
     }
     let mut rows = vec![];
+    let footer = Regex::new(r"(?i)^\d+ (?:upgrades? available|actualizaci[oó]n disponible|actualizaciones disponibles|mises? à jour disponibles?|aktualisierungen? verfügbar)\.?$").unwrap();
     let mut rejected = 0;
     for line in &lines[separator + 1..] {
-        if line.trim().is_empty() {
+        if line.trim().is_empty() || footer.is_match(line.trim()) {
             continue;
         }
-        let cells: Vec<_> = split.split(line.trim()).collect();
+        let line = line.trim();
+        let mut cells: Vec<_> = split.split(line).collect();
+        // WinGet can leave just one space after the widest name or ID. The
+        // aligned header gives reliable byte offsets for ASCII display rows.
+        if line.is_ascii()
+            && header.is_ascii()
+            && line.len() > starts[2]
+            && starts
+                .iter()
+                .skip(1)
+                .filter(|&&i| i < line.len())
+                .all(|&i| line.as_bytes()[i - 1] == b' ')
+        {
+            let fixed: Vec<_> = starts
+                .iter()
+                .enumerate()
+                .map(|(n, &start)| {
+                    let end = starts
+                        .get(n + 1)
+                        .copied()
+                        .unwrap_or(line.len())
+                        .min(line.len());
+                    line.get(start..end).unwrap_or("").trim()
+                })
+                .collect();
+            if valid_id(fixed[1]) && !fixed[0].is_empty() && !fixed[2].is_empty() {
+                cells = fixed;
+            }
+        }
         if cells.len() < 3
             || cells.len() > columns
             || !valid_id(cells[1])
@@ -342,7 +375,47 @@ pub fn run_with_input(
         stderr: err.join().unwrap_or_default(),
     })
 }
+pub fn confirm_installed(id: &str, version: &str) -> bool {
+    if !valid_id(id) {
+        return false;
+    }
+    let result = run(
+        "winget.exe",
+        &[
+            "list",
+            "--id",
+            id,
+            "--exact",
+            "--source",
+            "winget",
+            "--disable-interactivity",
+        ]
+        .map(String::from),
+        Some(Duration::from_secs(25)),
+    );
+    result.is_ok_and(|o|o.code==0 && parse(&o.stdout).is_ok_and(|(rows,rejected)| {
+        matches!(rows.as_slice(),[row] if rejected==0 && row.id.eq_ignore_ascii_case(id) && crate::releases::compare(&row.version,version)=="Matches release")
+    }))
+}
 pub fn list() -> Result<(Vec<Row>, usize)> {
+    // Use an already-installed Windows Package Manager module when available.
+    // An unsupported module or incomplete response falls back to the bundled CLI reader.
+    static HAS_MODULE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *HAS_MODULE.get_or_init(|| {
+        crate::inventory::powershell(
+            "if(Get-Module -ListAvailable -Name Microsoft.WinGet.Client){exit 0};exit 1",
+            10,
+        )
+        .is_ok_and(|o| o.code == 0)
+    }) && let Ok(o) =
+        crate::inventory::powershell(include_str!("../scripts/winget-list.ps1"), 120)
+        && o.code == 0
+        && let Ok(rows) = serde_json::from_str::<Vec<Row>>(o.stdout.trim())
+        && !rows.is_empty()
+        && rows.iter().all(|r| valid_id(&r.id) && !r.name.is_empty())
+    {
+        return Ok((rows, 0));
+    }
     let o = run(
         "winget.exe",
         &["list", "--source", "winget", "--disable-interactivity"].map(String::from),
@@ -461,11 +534,18 @@ mod tests {
         assert!(valid_id("Vendor.App"));
     }
     #[test]
+    fn table_uses_header_for_single_space_boundaries() {
+        let (rows, rejected)=parse("Name        Id         Version\n--------------------------------\nExample App Vendor.App 7.2.1").unwrap();
+        assert_eq!(rejected, 0);
+        assert_eq!(rows[0].id, "Vendor.App");
+        assert_eq!(rows[0].version, "7.2.1");
+    }
+    #[test]
     fn table_fails_closed() {
         assert!(parse("nonsense").is_err());
         let (r,n)=parse("Name  Id  Version  Available\n------------------------------------\nExample  Vendor.Example  1.0  2.0\nBad  Vendor.…  1\n2 upgrades available.").unwrap();
         assert_eq!(r.len(), 1);
-        assert_eq!(n, 2);
+        assert_eq!(n, 1);
         assert_eq!(r[0].available, "2.0");
     }
     #[test]

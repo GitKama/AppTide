@@ -1,5 +1,11 @@
 # Changes
 
+## 0.2.8-beta.1 â€” 25 November 2026
+
+- Default to dark mode and remember appearance in Settings.
+- Recheck automatic-update permission at execution, preserve stale inventory, and support later receipt verification.
+- Separate discovery from installer verification. Add direct receipt logs, startup diagnostics and a window-ready self-update handoff.
+
 ## 0.2.7-beta.1 — 15 October 2026
 
 - Fix Store checks reporting a parsing error when the installed consumer CLI returns `No updates found.`. Recognize the observed empty result while retaining failure checks.
@@ -71,23 +77,8 @@
 
 ## 0.2.0-beta.1 — 10 October 2026
 
-- Add a native Rust application with a custom egui/eframe immediate-mode interface; preserve the Electron alpha alongside it.
 - Virtualize long app lists and keep update/uninstall controls outside both scrolling areas.
 - Port registry inventory, WinGet operations, catalogue history, exclusions, log sightings, previews, preflight checks and receipts to Rust. AppX uses a fixed read-only Windows command.
-- Separate the beta catalogue from the alpha, provide import, retain backups and prevent simultaneous writers.
 - Separate process stdout from stderr so PowerShell diagnostic messages cannot corrupt inventory JSON.
 - Statically link the MSVC runtime for a portable executable using only Windows system DLL imports.
-- Add 15 Rust checks and Windows CI. Validate native screenshots, a live read-only scan, and an alpha import that preserves the original file hash.
 - This first Rust beta does not yet enable automatic updates, portable discovery or release-watch editing. Real installer and uninstaller behavior remains unvalidated.
-
-## 0.1.1 alpha — 10 October 2026
-
-- Keep the application details pane visible while scrolling a long inventory. Additional details scroll independently.
-- Reset the pane to its actions when another app is selected. On compact windows, bring the stacked details into view.
-- Display the running application version in the sidebar.
-- Exercise scrolling and selection with 100 extra synthetic app records in desktop tests.
-- Isolate desktop-test profiles from running AppTide windows and require a passing test receipt, preventing a second-instance handoff from silently skipping checks.
-
-## 0.1.0 alpha — 10 October 2026
-
-Initial Windows inventory, WinGet operations, local catalogue, source watches, and desktop application.

@@ -1,6 +1,6 @@
 # Project status and remaining work
 
-Reviewed against **0.2.7-beta.1 on 15 October 2026**. This is a status map, not a version/date promise. The linked GitHub issues contain completion criteria; completed capabilities belong in the changelog rather than an open umbrella issue.
+Reviewed against **0.2.8-beta.1 on 25 November 2026**. This is a status map, not a version/date promise. The linked GitHub issues contain completion criteria; completed capabilities belong in the changelog rather than an open umbrella issue.
 
 ## Shipped
 
