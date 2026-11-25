@@ -1,5 +1,11 @@
 # Changes
 
+## 0.2.9-beta.1 — 25 November 2026
+
+- Review an individual WinGet update when multiple versions share a package ID and Windows identifies each registration. The preview shows the selected and other installed versions.
+- Recheck the exact registration and offer before launching WinGet. Activity distinguishes a replacement from a side-by-side installation and flags unexpected changes to other versions.
+- Read narrow WinGet tables correctly and preserve paused updates when a previously unresolved registration is matched.
+
 ## 0.2.8-beta.1 â€” 25 November 2026
 
 - Default to dark mode and remember appearance in Settings.

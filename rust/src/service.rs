@@ -131,7 +131,8 @@ impl Service {
         }
         // A table with skipped rows cannot prove that a package is absent.
         self.absence_verifiable = complete && rejected == 0;
-        let observed = winget::reconcile(native, rows);
+        let details = crate::registrations::read_groups(&rows);
+        let observed = winget::reconcile_with(native, rows, details);
         self.observe_inventory(observed, discovery);
         self.reconcile_receipts();
         crate::knowledge::enrich(&mut self.catalog);
@@ -190,7 +191,11 @@ impl Service {
     }
     fn reconcile_receipts(&mut self) {
         for r in self.catalog.receipts.iter_mut().rev().take(1000) {
-            if r["kind"] != "update" || r["status"] != "unverified" || r["exitCode"] != 0 {
+            if r["targetedRegistration"] == true
+                || r["kind"] != "update"
+                || r["status"] != "unverified"
+                || r["exitCode"] != 0
+            {
                 continue;
             }
             let Some(id) = r["appId"].as_str() else {
@@ -945,8 +950,14 @@ impl Service {
                 before.uid
             );
             let mut receipt = json!({"id":receipt_id,"batchId":batch_id,"kind":plan.kind,"automatic":plan.automatic,"registration":before.key,"publisher":before.publisher,"scope":before.scope,"appId":before.uid,"packageId":before.winget_id,"name":before.name,"before":before.version,"target":before.available,"startedAt":now(),"provider":if before.winget_id.is_some(){"WinGet"}else{"GitHub"},"status":"running"});
+            if before.ambiguous {
+                receipt["targetedRegistration"] = true.into();
+            }
             // Never silently change the reviewed target. Skip stale items without blocking unrelated apps.
             let valid = validate_app(&plan.kind, before, &self.catalog).and_then(|()| {
+                if before.ambiguous && !self.demo {
+                    crate::registrations::check_offer(before)?;
+                }
                 if plan.automatic {
                     let current = self.catalog.apps.get(&before.uid).ok_or("Installation changed")?;
                     if self.catalog.settings["automatic"] != true
@@ -1028,16 +1039,37 @@ impl Service {
                         .values()
                         .filter(|a| a.present && crate::github_update::same_installation(a, before))
                         .collect();
-                    let after = matches.first().copied();
-                    let state = catalog::classify(
-                        &plan.kind,
-                        before,
-                        after,
-                        code,
-                        complete
-                            && matches.len() <= 1
-                            && (plan.kind != "uninstall" || self.absence_verifiable),
-                    );
+                    let targeted = before.ambiguous && !before.registration_group.is_empty();
+                    let outcome = (targeted && complete && code == 0)
+                        .then(|| crate::registrations::verified_outcome(before, &matches))
+                        .flatten();
+                    let after = if targeted {
+                        matches
+                            .iter()
+                            .copied()
+                            .find(|a| a.version == before.available)
+                    } else {
+                        matches.first().copied()
+                    };
+                    let state = if targeted {
+                        if outcome.is_some() {
+                            "verified"
+                        } else if code == 0 {
+                            "unverified"
+                        } else {
+                            "failed"
+                        }
+                    } else {
+                        catalog::classify(
+                            &plan.kind,
+                            before,
+                            after,
+                            code,
+                            complete
+                                && matches.len() <= 1
+                                && (plan.kind != "uninstall" || self.absence_verifiable),
+                        )
+                    };
                     receipt["status"] = state.into();
                     receipt["exitCode"] = code.into();
                     receipt["after"] = after.map(|a| json!(a.version)).unwrap_or(Value::Null);
@@ -1049,6 +1081,8 @@ impl Service {
                     );
                     receipt["detail"] = if winget::queue_stop_code(code) {
                         format!("WinGet requested cancellation, a reboot, or reported a shared installer/source problem (0x{:08X}). Remaining apps were not started; review the log before resuming.", code as u32)
+                    } else if let Some(message) = outcome {
+                        message.into()
                     } else if state == "verified" {
                         "Confirmed by a fresh inventory.".to_string()
                     } else if !complete {
@@ -1122,7 +1156,10 @@ pub fn prepare(catalog: &Catalog, kind: &str, ids: &[String]) -> Result<Plan> {
     let mut apps = vec![];
     for id in ids {
         let a = catalog.apps.get(id).ok_or("App no longer exists")?;
-        if (kind == "uninstall" && !actionable(a)) || (kind == "update" && !eligible(a)) {
+        let individual = ids.len() == 1 && crate::registrations::can_update(a);
+        if (kind == "uninstall" && !actionable(a))
+            || (kind == "update" && !(eligible(a) || individual))
+        {
             return Err(
                 "App is protected, ambiguous, paused, or has no supported update source.".into(),
             );
@@ -1180,6 +1217,28 @@ fn validate_app(kind: &str, before: &App, catalog: &Catalog) -> Result<()> {
         .values()
         .filter(|a| a.present && crate::github_update::same_installation(a, before))
         .collect();
+    if before.ambiguous && kind == "update" {
+        let fresh = catalog.apps.get(&before.uid);
+        if !crate::registrations::can_update(before)
+            || !fresh.is_some_and(|a| {
+                crate::registrations::can_update(a)
+                    && a.registration_group == before.registration_group
+                    && a.winget_id == before.winget_id
+                    && a.key == before.key
+                    && a.publisher == before.publisher
+                    && a.scope == before.scope
+                    && a.version == before.version
+                    && a.available == before.available
+            })
+            || matches.len() != before.registration_group.len()
+            || matches
+                .iter()
+                .any(|a| a.registration_group != before.registration_group)
+        {
+            return Err("Installed versions or the reviewed update changed. Refresh and review the installation again.".into());
+        }
+        return Ok(());
+    }
     if matches.len() != 1 {
         return Err(format!(
             "{}: expected one installation, found {}. No installer started; refresh and review this app.",
@@ -1664,6 +1723,142 @@ mod tests {
         assert_eq!(r["observedVersions"], json!([]));
         assert_eq!(r["laterObservation"]["version"], a.available);
     }
+    fn launcher_inventory(versions: &[(&str, &str, &str, &str)]) -> Vec<App> {
+        let mut native = Vec::new();
+        let mut rows = Vec::new();
+        let mut details = String::new();
+        for (index, (key, version, display, available)) in versions.iter().enumerate() {
+            native.push(App {
+                key: format!("registry:LocalMachine:Registry32:{key}"),
+                scope: "machine".into(),
+                name: "Python Launcher".into(),
+                publisher: "Python Software Foundation".into(),
+                kind: "registry".into(),
+                version: (*display).into(),
+                ..Default::default()
+            });
+            rows.push(winget::Row {
+                name: "Python Launcher".into(),
+                id: "Python.Launcher".into(),
+                version: (*version).into(),
+                available: (*available).into(),
+            });
+            details.push_str(&format!("({}/{}) Python Launcher [Python.Launcher]\nVersion: {version}\nPublisher: Python Software Foundation\nLocal Identifier: ARP\\Machine\\X86\\{key}\n",index+1,versions.len()));
+        }
+        winget::reconcile_with(native, rows, crate::registrations::parse_details(&details))
+    }
+
+    #[test]
+    fn targeted_upgrade_reviews_one_registration_and_checks_all_siblings() {
+        let older = ("older", "3.13.0", "3.13.150.0", "");
+        let selected = ("selected", "3.14.7", "3.14.7150.0", "3.15.2");
+        let target = ("new", "3.15.2", "3.15.2150.0", "");
+        for (after, expected) in [
+            (vec![older, target], "updated"),
+            (vec![older, selected, target], "alongside"),
+            (vec![selected, target], "unverified"),
+            (vec![older, selected], "unverified"),
+        ] {
+            let (mut service, _) = batch_fixture();
+            service.catalog = Catalog::default();
+            service
+                .catalog
+                .observe(launcher_inventory(&[older, selected]));
+            let a = service
+                .catalog
+                .apps
+                .values()
+                .find(|a| !a.available.is_empty())
+                .unwrap()
+                .clone();
+            assert!(crate::registrations::can_update(&a));
+            assert!(!actionable(&a) && !eligible(&a));
+            assert!(winget::args("uninstall", &a).is_err());
+            assert!(prepare(&service.catalog, "uninstall", std::slice::from_ref(&a.uid)).is_err());
+            assert_eq!(
+                winget::args("update", &a).unwrap()[2],
+                r"ARP\Machine\X86\selected"
+            );
+            let plan = prepare(&service.catalog, "update", std::slice::from_ref(&a.uid)).unwrap();
+            let result = service.execute_with(
+                plan,
+                |_, _| {},
+                |_| Ok(true),
+                |s, _, _| {
+                    s.catalog.observe(launcher_inventory(&after));
+                    Ok(winget::Output {
+                        code: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    })
+                },
+            );
+            let r = service.catalog.receipts.last().unwrap();
+            if expected == "unverified" {
+                assert_eq!(r["status"], "unverified");
+                service.reconcile_receipts();
+                assert_eq!(
+                    service.catalog.receipts.last().unwrap()["status"],
+                    "unverified"
+                );
+            } else {
+                result.unwrap();
+                assert_eq!(r["status"], "verified");
+                assert!(r["detail"].as_str().unwrap().contains(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn resolving_an_old_winget_only_row_preserves_its_pause() {
+        let mut c = Catalog::default();
+        c.observe(vec![App {
+            uid: "legacy".into(),
+            key: "winget:Python.Launcher".into(),
+            winget_id: Some("Python.Launcher".into()),
+            version: "2".into(),
+            kind: "winget".into(),
+            ambiguous: true,
+            excluded: true,
+            ..Default::default()
+        }]);
+        c.observe(launcher_inventory(&[
+            ("old", "1", "1", ""),
+            ("selected", "2", "2", "3"),
+        ]));
+        let current = c
+            .apps
+            .values()
+            .find(|a| a.present && a.version == "2")
+            .unwrap();
+        assert!(current.excluded);
+        assert!(!crate::registrations::can_update(current));
+    }
+
+    #[test]
+    fn targeted_preflight_rejects_a_changed_sibling_pause_or_missing_binding() {
+        let (mut s, _) = batch_fixture();
+        let inventory = launcher_inventory(&[("old", "1", "1", ""), ("selected", "2", "2", "3")]);
+        s.catalog.observe(inventory);
+        let reviewed = s
+            .catalog
+            .apps
+            .values()
+            .find(|a| a.version == "2" && a.winget_id.as_deref() == Some("Python.Launcher"))
+            .unwrap()
+            .clone();
+        for change in 0..3 {
+            let mut c = s.catalog.clone();
+            let current = c.apps.get_mut(&reviewed.uid).unwrap();
+            match change {
+                0 => current.registration_group[0].version = "unexpected".into(),
+                1 => current.excluded = true,
+                _ => current.registration_group.clear(),
+            }
+            assert!(validate_app("update", &reviewed, &c).is_err());
+        }
+    }
+
     fn simulated_update(s: &mut Service, _: &str, before: &App) -> Result<winget::Output> {
         let a = s.catalog.apps.get_mut(&before.uid).unwrap();
         a.version = before.available.clone();

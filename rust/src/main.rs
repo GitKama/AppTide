@@ -7,6 +7,7 @@ mod github_update;
 mod inventory;
 mod knowledge;
 mod portable;
+mod registrations;
 mod releases;
 mod self_update;
 mod service;

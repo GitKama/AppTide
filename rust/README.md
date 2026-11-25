@@ -1,6 +1,6 @@
 # AppTide Rust beta
 
-Version 0.2.8-beta.1 is the native Rust implementation.
+Version 0.2.9-beta.1 is the native Rust implementation.
 The Rust beta has no JavaScript engine, browser renderer, Node runtime, or web server.
 
 **Build status:** compiled and validated locally on Windows x64. Automated checks, Clippy with warnings denied, native desktop/compact screenshot checks, and live read-only inventory checks passed. Automated operation tests use synthetic installers/state; repeatable real-installer VM acceptance is tracked in [#3](https://github.com/GitKama/AppTide/issues/3). See [validation](../docs/VALIDATION.md).
@@ -18,7 +18,7 @@ cargo build --locked --release
 ```
 
 WinGet must be available through Windows App Installer for WinGet operations. GitHub installers use their own verified release assets.
-Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.8-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
+Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/releases/tag/v0.2.9-beta.1), extract it, and launch `AppTide-Beta.exe`. The generated EXE is portable. The development toolchain is not needed to run it. The MSVC runtime is statically linked; the executable imports only Windows system DLLs. The beta is unsigned.
 
 ## Current scope
 
@@ -31,6 +31,7 @@ Download the beta ZIP from [Releases](https://github.com/GitKama/AppTide/release
 - Friendly AppX names and publishers; bounded, read-only executable metadata fallbacks for incomplete desktop registrations.
 - GitHub installer updates, metadata-based project detection, asset selection and opt-in unattended recipes. See [GitHub updates](../docs/GITHUB-UPDATES.md).
 - Authored AppTide icon embedded in the executable, window and taskbar.
+- When several versions share a WinGet ID, review an update for a confirmed Windows registration. Afterward, Activity shows whether the installer replaced the selected version or installed the update alongside it.
 - WinGet discovery, individual/batch updates, and individual removals. A preview is followed by a fresh preflight, serialized operations, and inventory verification.
 - Private schema-1 catalogue, version observations, pause preferences, bounded WinGet-log sightings, and receipts.
 - A custom immediate-mode UI: virtualized app rows, a separate details scroll area, and update/uninstall controls outside both scrolling areas.

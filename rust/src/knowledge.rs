@@ -127,6 +127,8 @@ pub fn enrich(c: &mut Catalog) {
 pub fn route(a: &App) -> &str {
     if a.protected {
         "Protected component"
+    } else if !a.registration_group.is_empty() {
+        "WinGet local registration"
     } else if a.ambiguous {
         "Review identity"
     } else if a.winget_id.is_some() {

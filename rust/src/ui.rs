@@ -793,7 +793,12 @@ impl Tide {
         ui.add_space(8.0);
         ui.colored_label(colors.accent, concat!("Rust ", env!("CARGO_PKG_VERSION")));
         ui.add_space(30.0);
-        let count = self.catalog.apps.values().filter(|a| eligible(a)).count();
+        let count = self
+            .catalog
+            .apps
+            .values()
+            .filter(|a| eligible(a) || crate::registrations::can_update(a))
+            .count();
         for (page, label) in [
             (Page::Updates, format!("Updates                 {count}")),
             (Page::Store, "Microsoft Store".into()),
@@ -878,15 +883,34 @@ impl Tide {
             });
         }
         ui.add_space(10.0);
+        let targeted = crate::registrations::can_update(&a);
+        if a.ambiguous {
+            let mut versions: Vec<_> = self
+                .catalog
+                .apps
+                .values()
+                .filter(|other| {
+                    other.present && a.winget_id.is_some() && other.winget_id == a.winget_id
+                })
+                .map(|other| other.version.as_str())
+                .collect();
+            versions.sort_unstable();
+            versions.dedup();
+            if !versions.is_empty() {
+                ui.label(format!("Installed versions: {}", versions.join(", ")));
+            }
+        }
         let external = !a.protected
             && !a.ambiguous
             && (crate::releases::repository(&a).is_some()
                 || a.knowledge.is_some()
                 || crate::custom::get(&a).is_some_and(|s| !s.url.is_empty()));
         let update = ui.add_enabled(
-            !self.busy && (eligible(&a) || external),
+            !self.busy && (eligible(&a) || targeted || external),
             egui::Button::new(
-                RichText::new(if eligible(&a) {
+                RichText::new(if targeted {
+                    "Review this version’s update"
+                } else if eligible(&a) {
                     "Update this app"
                 } else if crate::releases::repository(&a).is_some() {
                     "Open release page"
@@ -902,7 +926,7 @@ impl Tide {
         );
         self.update_rect = Some(update.rect);
         if update.clicked() {
-            if eligible(&a) {
+            if eligible(&a) || targeted {
                 self.prepare("update", vec![a.uid.clone()]);
             } else if let Some(repo) = crate::releases::repository(&a) {
                 open_url(&format!("https://github.com/{repo}/releases"));
@@ -925,8 +949,10 @@ impl Tide {
             ui.label(
                 RichText::new(if a.protected {
                     "Windows component protected from changes."
+                } else if !a.registration_group.is_empty() {
+                    "WinGet identified this Windows registration. Each version is reviewed individually."
                 } else if a.ambiguous {
-                    "Multiple installed versions. Resolve in Windows Settings."
+                    "WinGet could not link this entry to one Windows installation. Review the installed copies before making changes."
                 } else {
                     "Use the update route below. Removal is available in Windows Settings."
                 })
@@ -1229,7 +1255,9 @@ impl Tide {
                     {
                         let id = a.uid.clone();
                         let retry = match r["kind"].as_str() {
-                            Some("update") if eligible(a) => {
+                            Some("update")
+                                if eligible(a) || crate::registrations::can_update(a) =>
+                            {
                                 Some(("update", "Review retry with installer prompts"))
                             }
                             Some("uninstall") if actionable(a) && r["before"] == a.version => {
@@ -1432,6 +1460,10 @@ impl Tide {
             let learned=self.catalog.apps.values().filter(|a|a.present && a.winget_id.is_none() && a.knowledge.is_some()).count();let present=self.catalog.apps.values().filter(|a|a.present).count();let matched=self.catalog.apps.values().filter(|a|a.present&&a.winget_id.is_some()).count();
             ui.horizontal(|ui|{ui.label(RichText::new(format!("{present} app records  ·  {matched} WinGet / {learned} other known routes  ·  {} catalogue scans",self.catalog.scans)).size(12.0).color(colors.muted));});ui.separator();ui.add_space(10.0);
             if self.page==Page::Updates {
+                let individual = self.catalog.apps.values().filter(|a| crate::registrations::can_update(a)).count();
+                if individual > 0 {
+                    ui.label(format!("Individual review required for {individual} update{}. Select a version to review it.", if individual==1 {""} else {"s"}));
+                }
                 ui.horizontal_wrapped(|ui| {
                     let count=self.catalog.extra.get("storeCheck").and_then(|v|v["updates"].as_array()).map(Vec::len);
                     let failed=self.catalog.extra.get("storeCheck").is_some_and(|v|v["error"].is_string());
@@ -1583,7 +1615,39 @@ impl Tide {
         if let Some(mut plan) = self.plan.clone() {
             let mut confirm = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx,|ui|{ui.set_width(520.0);ui.heading(if plan.kind=="uninstall"{"Uninstall this app?"}else{"Review updates"});ui.label(if self.demo{"Demonstration only. No installed software will change."}else{"AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission."});egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{for a in &plan.apps{ui.label(RichText::new(&a.name).strong());ui.label(format!("{}  ·  {}{}",a.winget_id.as_deref().or_else(||crate::releases::repository(a)).unwrap_or(""),a.version,if plan.kind=="update"{format!(" → {}",a.available)}else{String::new()}));if let Some(o)=crate::github_update::offer(a){ui.label(format!("Installer: {}",o.name));ui.label(if o.mode=="interactive" || o.mode=="msi" {"Runs Windows setup; follow any installer prompts."}else{"Runs the reviewed unattended installer. Save your work first."});}ui.separator();}});if plan.kind=="update" && plan.apps.iter().any(|a|a.winget_id.is_some()){ui.checkbox(&mut plan.interactive,"Show installer prompts (useful when an unattended update fails)");}ui.horizontal(|ui|{let button=ui.button(if plan.kind=="update"{"Confirm updates"}else{"Confirm uninstall"});self.confirm_rect=Some(button.rect);confirm=button.clicked();cancel=ui.button("Cancel").clicked();});});
+            egui::Modal::new(egui::Id::new("operation-preview")).show(&ctx, |ui| {
+                ui.set_width(520.0);
+                ui.heading(if plan.kind == "uninstall" { "Uninstall this app?" } else { "Review updates" });
+                ui.label(if self.demo { "Demonstration only. No installed software will change." } else { "AppTide checks each reviewed target. A failed app is recorded and other apps continue. Cancellation, reboot requirements or failed verification scans stop the queue. Windows may ask for administrator permission." });
+                egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                    for a in &plan.apps {
+                        ui.label(RichText::new(&a.name).strong());
+                        let package = a.winget_id.as_deref().or_else(||crate::releases::repository(a)).unwrap_or("");
+                        let target = if plan.kind == "update" {format!(" → {}", a.available)} else {String::new()};
+                        ui.label(format!("{package}  ·  {}{target}",a.version));
+                        if let Some(r) = crate::registrations::bound(a,&a.registration_group) {
+                            ui.label(format!("Other installed versions: {}", a.registration_group.iter()
+                                .filter(|other| *other != r).map(|other| other.version.as_str()).collect::<Vec<_>>().join(", ")));
+                            ui.label("The installer may keep the selected version alongside the new one. AppTide checks which versions remain.");
+                            ui.collapsing("Windows registration", |ui| { ui.monospace(&r.selector); });
+                        }
+                        if let Some(o)=crate::github_update::offer(a) {
+                            ui.label(format!("Installer: {}",o.name));
+                            ui.label(if o.mode == "interactive" || o.mode == "msi" {"Runs Windows setup; follow any installer prompts."} else {"Runs the reviewed unattended installer. Save your work first."});
+                        }
+                        ui.separator();
+                    }
+                });
+                if plan.kind == "update" && plan.apps.iter().any(|a|a.winget_id.is_some()) {
+                    ui.checkbox(&mut plan.interactive, "Show installer prompts (useful when an unattended update fails)");
+                }
+                ui.horizontal(|ui| {
+                    let button = ui.button(if plan.kind == "update" {"Confirm updates"} else {"Confirm uninstall"});
+                    self.confirm_rect = Some(button.rect);
+                    confirm = button.clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
             self.plan = Some(plan.clone());
             if cancel {
                 self.plan = None;
@@ -1751,8 +1815,12 @@ fn app_row(ui: &mut Ui, a: &App, selected: bool) -> egui::Response {
         "Not present"
     } else if a.protected {
         "Protected"
+    } else if crate::registrations::can_update(a) {
+        "Review update"
+    } else if !a.registration_group.is_empty() {
+        "Multiple versions"
     } else if a.ambiguous {
-        "Ambiguous"
+        "Review installations"
     } else if a.excluded {
         "Paused"
     } else if !a.available.is_empty() {
@@ -1938,6 +2006,59 @@ mod tests {
             }
         }
     }
+    #[test]
+    #[ignore = "Read-only check of an explicitly supplied catalogue and exact WinGet offers"]
+    fn live_registration_update_buttons_reach_exact_preview() {
+        let file =
+            std::env::var_os("APPTIDE_CHECK_CATALOG").expect("Supply a scanned catalogue copy");
+        let catalog = Catalog::load(std::path::Path::new(&file)).unwrap();
+        let ids: Vec<_> = catalog
+            .apps
+            .values()
+            .filter(|a| crate::registrations::can_update(a))
+            .map(|a| a.uid.clone())
+            .collect();
+        assert!(!ids.is_empty());
+        let size = Vec2::new(1040.0, 650.0);
+        let ctx = egui::Context::default();
+        let mut service = Service::open(Default::default(), true).unwrap();
+        service.catalog = catalog;
+        let mut app = Tide::new(service, &ctx);
+        for id in ids {
+            app.selected = Some(id.clone());
+            app.plan = None;
+            for _ in 0..3 {
+                frame(&mut app, &ctx, size, vec![]);
+            }
+            let pos = app.update_rect.unwrap().center();
+            for pressed in [true, false] {
+                frame(
+                    &mut app,
+                    &ctx,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+            }
+            let plan = app.plan.as_ref().unwrap();
+            assert_eq!(plan.apps.len(), 1);
+            let a = &plan.apps[0];
+            assert_eq!(a.uid, id);
+            crate::registrations::check_offer(a).unwrap();
+            println!(
+                "Verified review and WinGet offer for {} {} to {}",
+                a.name, a.version, a.available
+            );
+        }
+    }
+
     #[test]
     fn github_update_button_confirms_and_runs_through_worker() {
         for size in [Vec2::new(1440.0, 900.0), Vec2::new(1040.0, 650.0)] {

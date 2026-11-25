@@ -37,6 +37,8 @@ pub struct App {
     pub available: String,
     pub evidence: String,
     pub ambiguous: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub registration_group: Vec<crate::registrations::Registration>,
     pub present: bool,
     pub first_seen: String,
     pub last_seen: String,
@@ -130,6 +132,18 @@ impl Catalog {
     }
     pub fn observe(&mut self, apps: Vec<App>) {
         let time = now();
+        // A formerly WinGet-only row may gain its native registry identity on this scan.
+        let paused_versions: std::collections::HashSet<_> = self
+            .apps
+            .values()
+            .filter(|a| a.present && a.excluded && a.kind == "winget" && a.ambiguous)
+            .filter_map(|a| {
+                Some((
+                    a.winget_id.as_ref()?.to_ascii_lowercase(),
+                    a.version.clone(),
+                ))
+            })
+            .collect();
         for app in self.apps.values_mut() {
             app.present = false;
         }
@@ -184,6 +198,13 @@ impl Catalog {
                 }
             } else {
                 app.first_seen = time.clone();
+            }
+            if !app.registration_group.is_empty()
+                && app.winget_id.as_ref().is_some_and(|id| {
+                    paused_versions.contains(&(id.to_ascii_lowercase(), app.version.clone()))
+                })
+            {
+                app.excluded = true;
             }
             if !app.version.is_empty() && !app.versions.iter().any(|v| v.version == app.version) {
                 app.versions.push(Version {

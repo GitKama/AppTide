@@ -13,6 +13,7 @@
 - `0.2.6-beta.1`: public metadata directory, Steam library and improved diagnostics.
 - `0.2.7-beta.1`: empty Store check fix and visible AppTide self-update controls.
 - `0.2.8-beta.1` adds dark mode, delayed verification, cache management and startup acknowledgement.
+- `0.2.9-beta.1` adds individually reviewed updates for confirmed Windows registrations.
 - Subsequent small changes increment the patch version, with a beta suffix until stability criteria are met. Additional candidates of the same milestone increment the beta number. A final stable version removes the prerelease suffix.
 
 ## Release checklist

@@ -34,9 +34,23 @@ pub fn parse(text: &str) -> Result<(Vec<Row>, usize)> {
     }
     let split = Regex::new(r"\s{2,}").unwrap();
     let header = lines[separator - 1].trim();
-    let starts: Vec<_> = std::iter::once(0)
-        .chain(split.find_iter(header).map(|m| m.end()))
-        .collect();
+    // A narrow result can leave only one space even between header labels.
+    let english: Vec<_> = header.split_ascii_whitespace().collect();
+    let starts: Vec<_> = if matches!(
+        english.as_slice(),
+        ["Name", "Id", "Version"]
+            | ["Name", "Id", "Version", "Available" | "Source"]
+            | ["Name", "Id", "Version", "Available", "Source"]
+    ) {
+        english
+            .iter()
+            .map(|label| header.find(label).unwrap())
+            .collect()
+    } else {
+        std::iter::once(0)
+            .chain(split.find_iter(header).map(|m| m.end()))
+            .collect()
+    };
     let columns = starts.len();
     if !(3..=5).contains(&columns) {
         return Err("Unsupported WinGet table layout.".into());
@@ -116,7 +130,31 @@ pub fn normalize(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
+#[cfg(test)]
+pub fn reconcile(inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
+    reconcile_with(inventory, rows, Default::default())
+}
+pub fn reconcile_with(
+    mut inventory: Vec<App>,
+    rows: Vec<Row>,
+    details: crate::registrations::Groups,
+) -> Vec<App> {
+    let mut by_id = HashMap::<_, Vec<_>>::new();
+    for row in &rows {
+        by_id
+            .entry(row.id.to_ascii_lowercase())
+            .or_default()
+            .push(row);
+    }
+    let mut groups = crate::registrations::Groups::new();
+    for (id, mut records) in details {
+        if let Some(package) = by_id.get(&id)
+            && crate::registrations::verified_group(package, &records, &inventory).is_some()
+        {
+            records.sort_by(|a, b| a.selector.cmp(&b.selector));
+            groups.insert(id, records);
+        }
+    }
     for a in &mut inventory {
         a.uid = digest(&a.key)[..24].into();
         a.evidence = match a.kind.as_str() {
@@ -126,11 +164,18 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
         }
         .into();
     }
+    let mut conflicting_ids = std::collections::HashSet::new();
     for row in rows {
+        let group = groups.get(&row.id.to_ascii_lowercase());
+        let binding = group.and_then(|g| g.iter().find(|r| r.version == row.version));
+        let key = binding.and_then(|r| r.registry_key());
         let matches: Vec<_> = inventory
             .iter()
             .enumerate()
             .filter(|(_, a)| {
+                if let Some(key) = &key {
+                    return key.eq_ignore_ascii_case(&a.key);
+                }
                 a.kind == "registry"
                     && !crate::steam::is_game(a)
                     && normalize(&a.name) == normalize(&row.name)
@@ -144,6 +189,9 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
         let uid = digest(&format!("winget:{}", row.id))[..24].to_string();
         if matches.len() == 1 && inventory[matches[0]].winget_id.is_none() {
             let a = &mut inventory[matches[0]];
+            if a.ambiguous {
+                conflicting_ids.insert(row.id.to_ascii_lowercase());
+            }
             a.uid = uid;
             a.winget_id = Some(row.id);
             a.available = row.available;
@@ -153,7 +201,12 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
                 "WinGet: unique name, public publisher identity or equivalent numeric version"
             }
             .into();
-            if !known_version(&a.version) && known_version(&row.version) {
+            if let Some(group) = group {
+                a.registration_group.clone_from(group);
+                a.evidence =
+                    "Exact WinGet local identifier and Windows uninstall registration".into();
+            }
+            if binding.is_some() || (!known_version(&a.version) && known_version(&row.version)) {
                 a.version = row.version;
                 a.extra
                     .entry("metadataSources".into())
@@ -161,7 +214,15 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
                     "Installed WinGet observation".into();
             }
         } else {
+            for &i in &matches {
+                inventory[i].ambiguous = true;
+                if let Some(other) = &inventory[i].winget_id {
+                    conflicting_ids.insert(other.to_ascii_lowercase());
+                }
+                conflicting_ids.insert(row.id.to_ascii_lowercase());
+            }
             inventory.push(App {
+                ambiguous: !matches.is_empty(),
                 uid,
                 key: format!("winget:{}", row.id),
                 name: row.name,
@@ -189,13 +250,17 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
     }
     for a in &inventory {
         if let Some(id) = &a.winget_id {
-            *counts.entry(id.clone()).or_insert(0) += 1;
+            *counts.entry(id.to_ascii_lowercase()).or_insert(0) += 1;
         }
     }
+    let mut repeated = HashMap::new();
     for a in &mut inventory {
         if let Some(id) = &a.winget_id {
-            a.ambiguous = counts[id] > 1;
+            a.ambiguous |= counts[&id.to_ascii_lowercase()] > 1;
             let id = id.to_lowercase();
+            if conflicting_ids.contains(&id) {
+                a.registration_group.clear();
+            }
             a.protected |= id == "microsoft.appinstaller"
                 || id.starts_with("microsoft.windowsappruntime")
                 || id.starts_with("microsoft.windowsterminal")
@@ -203,7 +268,15 @@ pub fn reconcile(mut inventory: Vec<App>, rows: Vec<Row>) -> Vec<App> {
         }
         a.protected |= a.name.to_lowercase().starts_with("apptide");
         if a.ambiguous {
-            a.uid = digest(&format!("{}:{}:{}", a.key, a.version, a.scope))[..24].into();
+            let identity = format!("{}:{}:{}", a.key, a.version, a.scope);
+            let occurrence = repeated.entry(identity.clone()).or_insert(0usize);
+            a.uid = if *occurrence == 0 {
+                digest(&identity)
+            } else {
+                digest(&format!("{identity}:duplicate:{occurrence}"))
+            }[..24]
+                .into();
+            *occurrence += 1;
         }
     }
     inventory
@@ -221,6 +294,16 @@ pub fn args_mode(kind: &str, a: &App, interactive: bool) -> Result<Vec<String>> 
     if !["update", "uninstall"].contains(&kind) {
         return Err("Invalid operation".into());
     }
+    let selector = if a.ambiguous {
+        if kind != "update" || !crate::registrations::can_update(a) {
+            return Err("No uniquely identified installation for this action".into());
+        }
+        &crate::registrations::bound(a, &a.registration_group)
+            .unwrap()
+            .selector
+    } else {
+        id
+    };
     let mut args: Vec<String> = vec![
         if kind == "update" {
             "upgrade"
@@ -228,7 +311,7 @@ pub fn args_mode(kind: &str, a: &App, interactive: bool) -> Result<Vec<String>> 
             "uninstall"
         },
         "--id",
-        id,
+        selector,
         "--exact",
         "--source",
         "winget",
@@ -541,6 +624,15 @@ mod tests {
         assert_eq!(rows[0].version, "7.2.1");
     }
     #[test]
+    fn narrow_table_reports_the_installed_and_available_versions_separately() {
+        let (rows,rejected)=parse("Name            Id              Version Available\n-------------------------------------------------\nPython Launcher Python.Launcher 3.14.7  3.15.2").unwrap();
+        assert_eq!(rejected, 0);
+        assert_eq!(
+            (&*rows[0].version, &*rows[0].available),
+            ("3.14.7", "3.15.2")
+        );
+    }
+    #[test]
     fn table_fails_closed() {
         assert!(parse("nonsense").is_err());
         let (r,n)=parse("Name  Id  Version  Available\n------------------------------------\nExample  Vendor.Example  1.0  2.0\nBad  Vendor.…  1\n2 upgrades available.").unwrap();
@@ -567,6 +659,40 @@ mod tests {
         let apps = reconcile(vec![], rows);
         assert!(apps.iter().all(|a| a.ambiguous));
         assert_ne!(apps[0].uid, apps[1].uid);
+    }
+    #[test]
+    fn repeated_rows_and_conflicting_native_candidates_never_gain_package_wide_actions() {
+        let row = Row {
+            name: "Example".into(),
+            id: "Example.App".into(),
+            version: "1".into(),
+            available: "2".into(),
+        };
+        let repeated = reconcile(vec![], vec![row.clone(), row.clone()]);
+        assert_ne!(repeated[0].uid, repeated[1].uid);
+        let a = App {
+            name: row.name.clone(),
+            version: row.version.clone(),
+            kind: "registry".into(),
+            key: "one".into(),
+            ..Default::default()
+        };
+        let collisions = reconcile(
+            vec![
+                a.clone(),
+                App {
+                    key: "two".into(),
+                    ..a
+                },
+            ],
+            vec![row],
+        );
+        assert_eq!(collisions.len(), 3);
+        assert!(
+            collisions
+                .iter()
+                .all(|a| a.ambiguous && args("update", a).is_err())
+        );
     }
     #[test]
     fn exact_update_arguments() {

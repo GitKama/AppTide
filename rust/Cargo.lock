@@ -170,7 +170,7 @@ checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
 
 [[package]]
 name = "apptide-beta"
-version = "0.2.8-beta.1"
+version = "0.2.9-beta.1"
 dependencies = [
  "base64",
  "eframe",

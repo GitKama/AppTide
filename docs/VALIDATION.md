@@ -1,5 +1,11 @@
 # AppTide validation
 
+## Rust 0.2.9-beta.1
+
+- Windows x64 release checks passed for formatting, 92 default tests and Clippy with warnings denied. The opt-in live registration test also passed. The dependency advisory check reported zero matches across 138 runtime versions.
+- Regression coverage includes duplicate WinGet IDs, narrow table headers, distinct Windows registrations, changed offers, pause migration and preservation of other installed versions.
+- The opt-in read-only test opens the update preview and checks the exact WinGet offer using a separate catalogue. Simulated installations exercise both replacement and side-by-side verification.
+
 ## Rust 0.2.8-beta.1
 
 - Local Windows x64 checks passed for formatting, strict Clippy, 85 standard tests, and three optional download and synthetic-launcher checks. The optimized portable ZIP contains four package files.
